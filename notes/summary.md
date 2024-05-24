@@ -73,3 +73,55 @@ for progam_header_slice in progam_header_slices.take(progam_header_count) {
 - Watching the execution of our parser against the `hello` executable with `gdb` we see we jump to execute at the entrypoint address but nothing gets printed...  (NB: you need to set a breakpoint with `break elk::jmp` and not `break jmp` as it's shown on the article)
 
 # Part 3: Position-independent code
+
+- We modify our parsing application to stop before updating the protection on the pages and before jumping to allow looking at the memory map in more details with `cat /proc/<pid>/maps`. We notice that an extra page is added to the heap section after updating the protection (probably it is duplicated with other permissions):
+```
+cat /proc/1326308/maps
+...
+5564a5fc3000-5564a5fc4000 rw-p 00099000 fd:01 5113010                    /home/proseau/projects/perso/rust-executable-packer/elk/target/debug/elk
+5564a7cea000-5564a7d0b000 rw-p 00000000 00:00 0                          [heap]
+7f1a9779a000-7f1a9779d000 rw-p 00000000 00:00 0
+...
+```
+vs
+```
+cat /proc/1326308/maps
+...
+5564a5fc3000-5564a5fc4000 rw-p 00099000 fd:01 5113010                    /home/proseau/projects/perso/rust-executable-packer/elk/target/debug/elk
+5564a7cea000-5564a7ceb000 rwxp 00000000 00:00 0                          [heap]
+5564a7ceb000-5564a7d0b000 rw-p 00000000 00:00 0                          [heap]
+7f1a9779a000-7f1a9779d000 rw-p 00000000 00:00 0
+...
+```
+
+- NB: You can print what is in the registers with `info register <reg-name>` while you execute your program in `gdb`.
+
+- Using `ugdb` and executing the parser program, we see that it wants to execute the `movabs rsi,0x402000` at some point. But `0x402000` corresponds to a virtual address to which some data should be mapped (it is actually the virtual address of the string "Hello World"):
+```
+# output of our parser program
+Analyzsing "../playground/hello"
+File {
+    tpe: Exec,
+    machine: X86_64,
+    entry_point: 00401000,
+    program_headers: [
+        file 00000000..000000e8 | mem 00400000..004000e8 | align 00001000 | R.. Load,
+        file 00001000..00001025 | mem 00401000..00401025 | align 00001000 | R.X Load,
+        file 00002000..0000200d | mem 00402000..0040200d | align 00001000 | RW. Load, <- here!
+    ],
+}
+# checking what is in that section of the file:
+$ dd if=../playground/hello bs=1 count=$((0xd)) skip=$((0x2000))
+Hello, World
+13+0 records in
+13+0 records out
+1
+```
+but since we loaded the `hello` ELF file in our parser program, it lives in the heap of the program (this has been done by the rust allocator when reading the file, not by `exec`), hence there is nothing at address `0x402000`! Checking the memory maps shows that only addresses starting from:
+```
+555555554000-55555555d000 r--p 00000000 fd:01 5113010                    /home/proseau/projects/perso/rust-executable-packer/elk/target/debug/elk
+55555555d000-5555555cd000 r-xp 00009000 fd:01 5113010                    /home/proseau/projects/perso/rust-executable-packer/elk/target/debug/elk
+5555555cd000-5555555e8000 r--p 00079000 fd:01 5113010                    /home/proseau/projects/perso/rust-executable-packer/elk/target/debug/elk
+```
+
+- We try to inline the data in the assembly code (no `moveabs` instruction to some fixed address), and then we do see some text printed.

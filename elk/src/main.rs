@@ -27,13 +27,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // data (offset -> offset + memsize), cf. (1)
     ndisasm(&entry_point_program_header.data[..], file.entry_point)?; 
 
-    // let status = Command::new(&input_path).status()?;
-    // if !status.success() {
-    //     return Err("process did not exit successfully".into());
-    // }
-
-    println!("Executing {:?} in memory...", input_path);
-
+    let _ = pause("update page protection of the entry_point read on heap");
     let code = &entry_point_program_header.data; // shadowing the program_header struct by the vec8
     unsafe {
         protect(code.as_ptr(), code.len(), Protection::READ_WRITE_EXECUTE)?;
@@ -47,10 +41,18 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("entry offset @ {:?}", entry_point_offset);
     println!(" entry point @ {:?}", entry_point);
 
+    let _ = pause("jump to entry_point in heap");
     unsafe {
         jmp(entry_point);
     }
 
+    Ok(())
+}
+
+fn pause(reason: &str) -> Result<(), Box<dyn Error>> {
+    println!("Press Enter to {}...", reason);
+    let mut s = String::new();
+    std::io::stdin().read_line(&mut s).map(|_| ())?;
     Ok(())
 }
 
