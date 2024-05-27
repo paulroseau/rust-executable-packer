@@ -74,23 +74,26 @@ for progam_header_slice in progam_header_slices.take(progam_header_count) {
 
 # Part 3: Position-independent code
 
-- We modify our parsing application to stop before updating the protection on the pages and before jumping to allow looking at the memory map in more details with `cat /proc/<pid>/maps`. We notice that an extra page is added to the heap section after updating the protection (probably it is duplicated with other permissions):
+- We modify our parsing application to stop before updating the protection on the pages and before jumping to allow looking at the memory map in more details with `cat /proc/<pid>/maps`. We notice that the kernel "splits" the heap, making a small page executable and leaving the rest with the previous read-only protection:
 ```
 cat /proc/1326308/maps
 ...
-5564a5fc3000-5564a5fc4000 rw-p 00099000 fd:01 5113010                    /home/proseau/projects/perso/rust-executable-packer/elk/target/debug/elk
-5564a7cea000-5564a7d0b000 rw-p 00000000 00:00 0                          [heap]
-7f1a9779a000-7f1a9779d000 rw-p 00000000 00:00 0
+55fd92d58000-55fd92d59000 rw-p 00099000 fd:01 5113550                    /home/proseau/projects/perso/rust-executable-packer/elk/target/debug/elk
+55fd93001000-55fd93022000 rw-p 00000000 00:00 0                          [heap]
+7f02077a2000-7f02077a5000 rw-p 00000000 00:00 0
+7f02077a5000-7f02077cb000 r--p 00000000 fd:01 4456906                    /usr/lib/x86_64-linux-gnu/libc.so.6
 ...
 ```
 vs
 ```
 cat /proc/1326308/maps
 ...
-5564a5fc3000-5564a5fc4000 rw-p 00099000 fd:01 5113010                    /home/proseau/projects/perso/rust-executable-packer/elk/target/debug/elk
-5564a7cea000-5564a7ceb000 rwxp 00000000 00:00 0                          [heap]
-5564a7ceb000-5564a7d0b000 rw-p 00000000 00:00 0                          [heap]
-7f1a9779a000-7f1a9779d000 rw-p 00000000 00:00 0
+55fd92d58000-55fd92d59000 rw-p 00099000 fd:01 5113550                    /home/proseau/projects/perso/rust-executable-packer/elk/target/debug/elk
+55fd93001000-55fd93003000 rw-p 00000000 00:00 0                          [heap]
+55fd93003000-55fd93004000 rwxp 00000000 00:00 0                          [heap]
+55fd93004000-55fd93022000 rw-p 00000000 00:00 0                          [heap]
+7f02077a2000-7f02077a5000 rw-p 00000000 00:00 0
+7f02077a5000-7f02077cb000 r--p 00000000 fd:01 4456906                    /usr/lib/x86_64-linux-gnu/libc.so.6
 ...
 ```
 
@@ -117,7 +120,7 @@ Hello, World
 13+0 records out
 1
 ```
-but since we loaded the `hello` ELF file in our parser program, it lives in the heap of the program (this has been done by the rust allocator when reading the file, not by `exec`), hence there is nothing at address `0x402000`! Checking the memory maps shows that only addresses starting from:
+but since we loaded the `hello` ELF file in our parser program, it lives in the heap of the program (this has been done by the rust allocator when reading the file, not by `exec`), hence there is nothing at address `0x402000`! Checking the memory maps shows only addresses starting from:
 ```
 555555554000-55555555d000 r--p 00000000 fd:01 5113010                    /home/proseau/projects/perso/rust-executable-packer/elk/target/debug/elk
 55555555d000-5555555cd000 r-xp 00009000 fd:01 5113010                    /home/proseau/projects/perso/rust-executable-packer/elk/target/debug/elk
@@ -125,3 +128,40 @@ but since we loaded the `hello` ELF file in our parser program, it lives in the 
 ```
 
 - We try to inline the data in the assembly code (no `moveabs` instruction to some fixed address), and then we do see some text printed.
+
+- We modify the parsing program such that for each program header of type LOAD:
+  - we require the OS to allocate a new memory page to the process and we map it at the virtual address pointed to by `virtual_address` (the address that the section pointed to by the program header should end up being mapped to by `exec` - the section is at `offset` in the file):
+    ```rust
+    let mem_range = program_header.mem_range();
+    let len: usize = (mem_range.end - mem_range.start).into();
+    let addr: *mut u8 = mem_range.start.0 as _;
+    let map = MemoryMap::new(len, &[MapOption::MapWritable, MapOption::MapAddr(addr)])?;
+    ```
+  NB: we used a crate to get the MemoryMap structure, that create relies on the libc crate underneath (it generates binary code that can be linked to C binary code - the code of libc on Linux, cf. `readelf -d ./target/debug/elk | grep "NEEDED"`)
+  At the end of this step we see new pages appearing for each segment, eg. after the first call to `MemoryMap::new`:
+  ```
+  00400000-00401000 -w-p 00000000 00:00 0 <- this is new
+  55c3be274000-55c3be27e000 r--p 00000000 fd:01 5115110                    /home/proseau/projects/perso/rust-executable-packer/elk/target/debug/elk
+  55c3be27e000-55c3be2f2000 r-xp 0000a000 fd:01 5115110                    /home/proseau/projects/perso/rust-executable-packer/elk/target/debug/elk
+  55c3be2f2000-55c3be30e000 r--p 0007e000 fd:01 5115110                    /home/proseau/projects/perso/rust-executable-packer/elk/target/debug/elk
+  ...
+  ```
+  - we copy the data of the program header (living as a `Vec<u8>` on the heap of the program) at the location of the newly created page:
+    ```rust
+    let destination = unsafe { std::slice::from_raw_parts_mut(addr, program_header.data.len()) };
+    destination.copy_from_slice(&program_header.data[..]);
+    ```
+  - we update page protections based the protection flages in the program header:
+  ```
+  00400000-00401000 r--p 00000000 00:00 0 <- this is new
+  55c3be274000-55c3be27e000 r--p 00000000 fd:01 5115110                    /home/proseau/projects/perso/rust-executable-packer/elk/target/debug/elk
+  55c3be27e000-55c3be2f2000 r-xp 0000a000 fd:01 5115110                    /home/proseau/projects/perso/rust-executable-packer/elk/target/debug/elk
+  55c3be2f2000-55c3be30e000 r--p 0007e000 fd:01 5115110                    /home/proseau/projects/perso/rust-executable-packer/elk/target/debug/elk
+  ...
+  ```
+  Eventually the program `hello` which uses the `movebs` instruction referring to an address which was not available in the process virtual memory (the code was mapped on the heap) executes properly when jumping there.
+
+At this point we understand that `exec`:
+- parses the ELF files
+- uses `mmap` (or the internal Kernel equivalent) to map memory pages to the virtual address pointed to by the ELF program header file
+- adjusts the protection bits of those pages

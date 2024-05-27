@@ -1,5 +1,7 @@
 use std::{env, error::Error, fs, io::Write, process::{Command, Stdio}};
 
+use delf::SegmentType;
+use mmap::{MemoryMap, MapOption};
 use region::{protect, Protection};
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -24,26 +26,60 @@ fn main() -> Result<(), Box<dyn Error>> {
         .expect("no segment containing entrypoint found");
 
     // the entry_point is not necessarily the start of the section pointed to by the program header
-    // data (offset -> offset + memsize), cf. (1)
-    ndisasm(&entry_point_program_header.data[..], file.entry_point)?; 
+    // data (offset -> offset + memsize)
+    ndisasm(&entry_point_program_header.data[..], file.entry_point)?;
 
-    let _ = pause("update page protection of the entry_point read on heap");
-    let code = &entry_point_program_header.data; // shadowing the program_header struct by the vec8
-    unsafe {
-        protect(code.as_ptr(), code.len(), Protection::READ_WRITE_EXECUTE)?;
+    // we'll need to hold onto our "mmap::MemoryMap", because dropping them
+    // unmaps them!
+    let mut mappings = Vec::new();
+
+    // we're only interested in "Load" segments
+    for program_header in file
+        .program_headers
+        .iter()
+        .filter(|ph| ph.segment_type == SegmentType::Load)
+    {
+        let _ = pause(&(format!("map segment @ {:?} with {:?}", program_header.mem_range(), program_header.flags)));
+
+        // note: mmap-ing would fail if the segments weren't aligned on pages,
+        // but luckily, that is the case in the file already. That is not a coincidence.
+        let mem_range = program_header.mem_range();
+        let len: usize = (mem_range.end - mem_range.start).into();
+        // `as` is the "cast" operator, and `_` is a placeholder to force rustc
+        // to infer the type based on other hints (here, the left-hand-side declaration)
+        let addr: *mut u8 = mem_range.start.0 as _;
+
+        // at first, we want the memory area to be writable, so we can copy to it.
+        // we'll set the right permissions later
+        let map = MemoryMap::new(len, &[MapOption::MapWritable, MapOption::MapAddr(addr)])?;
+
+        let _ = pause("copy data");
+        let destination = unsafe { std::slice::from_raw_parts_mut(addr, program_header.data.len()) };
+        destination.copy_from_slice(&program_header.data[..]);
+
+        let _ = pause("changing protection");
+        let protection = program_header.flags.iter().fold(
+            Protection::NONE,
+            |acc, flag| match flag {
+                delf::SegmentFlag::Read => acc | Protection::READ,
+                delf::SegmentFlag::Write => acc | Protection::WRITE,
+                delf::SegmentFlag::Execute => acc | Protection::EXECUTE,
+            }
+        );
+
+        unsafe { 
+            protect(destination.as_ptr(), destination.len(), protection)?; 
+        }
+
+        mappings.push(map);
     }
-
-    // (1)
-    let entry_point_offset = file.entry_point - entry_point_program_header.virtual_address;
-    let entry_point = unsafe { code.as_ptr().add(entry_point_offset.into()) };
-
-    println!("        code @ {:?}", code.as_ptr());
-    println!("entry offset @ {:?}", entry_point_offset);
-    println!(" entry point @ {:?}", entry_point);
 
     let _ = pause("jump to entry_point in heap");
     unsafe {
-        jmp(entry_point);
+        // casting pointer a u64 into a pointer on a u8. Contrarily to before we know there are
+        // some valid byes at address file.entry_point.0, because we mapped the program header
+        // there
+        jmp(file.entry_point.0 as _);
     }
 
     Ok(())
