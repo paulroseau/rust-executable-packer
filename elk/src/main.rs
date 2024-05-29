@@ -29,6 +29,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     // data (offset -> offset + memsize)
     ndisasm(&entry_point_program_header.data[..], file.entry_point)?;
 
+    let base = 0x400000_usize;
+
     // we'll need to hold onto our "mmap::MemoryMap", because dropping them
     // unmaps them!
     let mut mappings = Vec::new();
@@ -38,6 +40,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .program_headers
         .iter()
         .filter(|ph| ph.segment_type == SegmentType::Load)
+        .filter(|ph| ph.mem_range().end > ph.mem_range().start)
     {
         let _ = pause(&(format!("map segment @ {:?} with {:?}", program_header.mem_range(), program_header.flags)));
 
@@ -47,14 +50,22 @@ fn main() -> Result<(), Box<dyn Error>> {
         let len: usize = (mem_range.end - mem_range.start).into();
         // `as` is the "cast" operator, and `_` is a placeholder to force rustc
         // to infer the type based on other hints (here, the left-hand-side declaration)
-        let addr: *mut u8 = mem_range.start.0 as _;
+        let start = base + mem_range.start.0 as usize;
+        let aligned_start = align_lower(start);
+        let padding = start - aligned_start;
+        let len = len + padding; // shadowing
+
+        let addr: *mut u8 = aligned_start as _;
+        println!("Addr: {:?}, Padding: {:08x}", addr, padding);
 
         // at first, we want the memory area to be writable, so we can copy to it.
         // we'll set the right permissions later
         let map = MemoryMap::new(len, &[MapOption::MapWritable, MapOption::MapAddr(addr)])?;
 
         let _ = pause("copy data");
-        let destination = unsafe { std::slice::from_raw_parts_mut(addr, program_header.data.len()) };
+        // destination is start (addr + padding) not addr, otherwise we would not respect the
+        // mapping and copy over the padding
+        let destination = unsafe { std::slice::from_raw_parts_mut(start as _, program_header.data.len()) };
         destination.copy_from_slice(&program_header.data[..]);
 
         let _ = pause("changing protection");
@@ -79,16 +90,20 @@ fn main() -> Result<(), Box<dyn Error>> {
         // casting pointer a u64 into a pointer on a u8. Contrarily to before we know there are
         // some valid byes at address file.entry_point.0, because we mapped the program header
         // there
-        jmp(file.entry_point.0 as _);
+        jmp((file.entry_point.0 as usize + base) as _);
     }
 
     Ok(())
 }
 
+fn align_lower(addr: usize) -> usize {
+    addr & !0xfff
+}
+
 fn pause(reason: &str) -> Result<(), Box<dyn Error>> {
     println!("Press Enter to {}...", reason);
-    let mut s = String::new();
-    std::io::stdin().read_line(&mut s).map(|_| ())?;
+    // let mut s = String::new();
+    // std::io::stdin().read_line(&mut s).map(|_| ())?;
     Ok(())
 }
 
@@ -97,7 +112,7 @@ fn ndisasm(code: &[u8], origin: delf::Addr) -> Result<(), Box<dyn Error>> {
         .arg("-b")
         .arg("64")
         .arg("-o") // from origin
-        .arg(format!("{}", origin))
+        .arg(format!("{}", origin.0))
         .arg("-")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
