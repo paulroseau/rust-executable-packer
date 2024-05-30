@@ -139,3 +139,28 @@ Symbol table '.dynsym' contains 12 entries:
 ```
 
 - All the undefined symbols point to symbols to a particular library
+
+# Vec and iterators in Rust
+
+- Rust automatically adds the `.into_iter()` function implicitly when using a
+`for` loop over a vector. 
+
+- `fn into_iter(self)` comes from the implementation of
+```rust
+impl<T, A: Allocator> IntoIterator for Vec<T, A> {
+    ...
+}
+```
+
+- When using a for loop with a reference to a vector the implementation returns
+  an immutable iterator which does not own the arguments:
+  ```rust
+  impl<'a, T, A: Allocator> IntoIterator for &'a Vec<T, A> {
+    type Item = &'a T;
+    type IntoIter = slice::Iter<'a, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+  }
+  ```

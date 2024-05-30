@@ -1,6 +1,7 @@
+use core::panic;
 use std::{env, error::Error, fs, io::Write, process::{Command, Stdio}};
 
-use delf::SegmentType;
+use delf::{SegmentContent, SegmentType};
 use mmap::{MemoryMap, MapOption};
 use region::{protect, Protection};
 
@@ -35,6 +36,30 @@ fn main() -> Result<(), Box<dyn Error>> {
     // unmaps them!
     let mut mappings = Vec::new();
 
+    println!("Dynamic entries");
+    if let Some(dynamic_program_header) = file.program_header_for_type(SegmentType::Dynamic) {
+        if let SegmentContent::Dynamic(ref entries) = dynamic_program_header.content {
+            for entry in entries {
+                println!("- {:?}", entry);
+            }
+        }
+    }
+    println!("");
+
+    println!("Relocation table");
+    let relocation_table = file.relocation_table().unwrap_or_else(|e| {
+        println!("Could not find relocation table: {:?}", e);
+        Default::default() // resolve to empty Vec
+    });
+
+    for relocation_entry in relocation_table.iter() {
+        println!("{:#?}", relocation_entry);
+        if let Some(program_header) = file.program_header_for_load_segment_at(relocation_entry.offset) {
+            println!("{:?}", program_header);
+        }
+    }
+    println!("");
+
     // we're only interested in "Load" segments
     for program_header in file
         .program_headers
@@ -42,7 +67,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .filter(|ph| ph.segment_type == SegmentType::Load)
         .filter(|ph| ph.mem_range().end > ph.mem_range().start)
     {
-        let _ = pause(&(format!("map segment @ {:?} with {:?}", program_header.mem_range(), program_header.flags)));
+        let _ = pause(&(format!("Mapping segment @ {:?} with {:?}", program_header.mem_range(), program_header.flags)));
 
         // note: mmap-ing would fail if the segments weren't aligned on pages,
         // but luckily, that is the case in the file already. That is not a coincidence.
@@ -62,13 +87,41 @@ fn main() -> Result<(), Box<dyn Error>> {
         // we'll set the right permissions later
         let map = MemoryMap::new(len, &[MapOption::MapWritable, MapOption::MapAddr(addr)])?;
 
-        let _ = pause("copy data");
+        let _ = pause("Copying data from file buffer (heap) to mapped memory");
         // destination is start (addr + padding) not addr, otherwise we would not respect the
         // mapping and copy over the padding
         let destination = unsafe { std::slice::from_raw_parts_mut(start as _, program_header.data.len()) };
         destination.copy_from_slice(&program_header.data[..]);
 
-        let _ = pause("changing protection");
+        println!("Applying relocations (if any)...");
+        for relocation_entry in relocation_table.iter() {
+            if mem_range.contains(&(relocation_entry.offset)) {
+                let offset_into_segment = relocation_entry.offset.0 - mem_range.start.0;
+                let relocation_address: *mut u64 = (start as u64 + offset_into_segment) as _;
+                println!(
+                    "Applying {:?} relocation @ {:?} from segment start {:?} = {:?}",
+                    relocation_entry.relocation_type,
+                    offset_into_segment,
+                    start,
+                    relocation_address,
+                );
+
+                match relocation_entry.relocation_type {
+                    delf::RelocationType::Relative => {
+                        let relocation_value = base as u64 + relocation_entry.addend.0;
+                        println!("Replacing with value {:?}", relocation_value);
+                        unsafe {
+                            std::ptr::write_unaligned(relocation_address, relocation_value as _);
+                        }
+                    }
+                    relocation_type => {
+                        panic!("Unsupported relocation type {:?}", relocation_type);
+                    }
+                }
+            }
+        }
+
+        let _ = pause("Changing protection of page");
         let protection = program_header.flags.iter().fold(
             Protection::NONE,
             |acc, flag| match flag {
@@ -85,7 +138,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         mappings.push(map);
     }
 
-    let _ = pause("jump to entry_point in heap");
+    let _ = pause("Jumping to entry_point in heap");
     unsafe {
         // casting pointer a u64 into a pointer on a u8. Contrarily to before we know there are
         // some valid byes at address file.entry_point.0, because we mapped the program header
@@ -101,7 +154,8 @@ fn align_lower(addr: usize) -> usize {
 }
 
 fn pause(reason: &str) -> Result<(), Box<dyn Error>> {
-    println!("Press Enter to {}...", reason);
+    println!("{}", reason);
+    // println!("Press Enter to continue...");
     // let mut s = String::new();
     // std::io::stdin().read_line(&mut s).map(|_| ())?;
     Ok(())
@@ -111,7 +165,7 @@ fn ndisasm(code: &[u8], origin: delf::Addr) -> Result<(), Box<dyn Error>> {
     let mut child = Command::new("ndisasm")
         .arg("-b")
         .arg("64")
-        .arg("-o") // from origin
+        .arg("-o") // since we pass a chunk of bytes, we want to show their real address in the file (-o <origin> instructs where the address column should start from
         .arg(format!("{}", origin.0))
         .arg("-")
         .stdin(Stdio::piped())

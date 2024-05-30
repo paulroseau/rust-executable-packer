@@ -383,3 +383,142 @@ Hello World
   - an ELF file points to an interpreter (a linker typically `ld`) which needs to be present on the host, you can see it with `file <elf-file>`
   - you can instruct `ld` to generate a Position Independent Executable with the option `ld -pie` such that the executable output can be loaded anywhere in memory and work (this commonly used for shared libraries which need to be mapped when running an arbitrary executable (we don't know what address span will be available)
   - some assembly instructions will break a PIE code, in our case we had to replace a `mov` by a `lea`
+
+# Part 4: ELF relocations
+
+- When disasembling the position dependent [assembly program](../playground/hello), we see that `moveabs` refers to the message bytes:
+```
+❯ objdump -M intel -D hello | grep -A 16 -B 10 syscall
+
+Disassembly of section .text:
+
+0000000000401000 <_start>:
+  401000:       b8 01 00 00 00          mov    eax,0x1
+  401005:       bf 01 00 00 00          mov    edi,0x1
+  40100a:       48 be 00 20 40 00 00    movabs rsi,0x402000
+  401011:       00 00 00 
+  401014:       ba 0d 00 00 00          mov    edx,0xd
+  401019:       0f 05                   syscall
+  40101b:       b8 3c 00 00 00          mov    eax,0x3c
+  401020:       48 31 ff                xor    rdi,rdi
+  401023:       0f 05                   syscall
+
+Disassembly of section .data:
+
+0000000000402000 <message>:             -- this assembly code is irrelevant, these bytes are interpreted as chars --
+  402000:       48                      rex.W
+  402001:       65 6c                   gs ins BYTE PTR es:[rdi],dx
+  402003:       6c                      ins    BYTE PTR es:[rdi],dx
+  402004:       6f                      outs   dx,DWORD PTR ds:[rsi]
+  402005:       2c 20                   sub    al,0x20
+  402007:       57                      push   rdi
+  402008:       6f                      outs   dx,DWORD PTR ds:[rsi]
+  402009:       72 6c                   jb     402077 <_end+0x67>
+  40200b:       64                      fs
+  40200c:       0a                      .byte 0xa
+
+❯ printf "\x48\x65\x6c\x6c\x6f\x2c\x20\x57\x6f\x72\x6c\x64\x0a"
+Hello, World
+
+❯ gdb ../playground/hello
+(gdb) break _start
+Breakpoint 1 at 0x401000
+(gdb) start
+Function "main" not defined.
+Starting program: /home/proseau/projects/perso/rust-executable-packer/playground/hello
+
+Breakpoint 1, 0x0000000000401000 in _start ()
+(gdb) x/10i $pc
+=> 0x401000 <_start>:   mov    eax,0x1
+   0x401005 <_start+5>: mov    edi,0x1
+   0x40100a <_start+10>:        movabs rsi,0x402000 <- no surprises there
+   0x401014 <_start+20>:        mov    edx,0xd
+   0x401019 <_start+25>:        syscall
+   0x40101b <_start+27>:        mov    eax,0x3c
+   0x401020 <_start+32>:        xor    rdi,rdi
+   0x401023 <_start+35>:        syscall
+   0x401025:    add    BYTE PTR [rax],al
+   0x401027:    add    BYTE PTR [rax],al
+```
+
+- However the [PIE version](../playground/hello-pie) still has a moveabs but to the `0x3000` address which does not hold any data when looking with `objdump`. However when we execute `hello-pie` we see that `0x3000` address has been updated:
+```
+❯ objdump -M intel -D hello-pie | grep -A 16 -B 10 syscall
+
+Disassembly of section .text:
+
+0000000000001000 <_start>:
+    1000:       b8 01 00 00 00          mov    eax,0x1
+    1005:       bf 01 00 00 00          mov    edi,0x1
+    100a:       48 be 00 30 00 00 00    movabs rsi,0x3000
+    1011:       00 00 00 
+    1014:       ba 0d 00 00 00          mov    edx,0xd
+    1019:       0f 05                   syscall
+    101b:       b8 3c 00 00 00          mov    eax,0x3c
+    1020:       48 31 ff                xor    rdi,rdi
+    1023:       0f 05                   syscall
+
+Disassembly of section .dynamic:
+
+0000000000002ed0 <_DYNAMIC>:
+    2ed0:       04 00                   add    al,0x0
+    2ed2:       00 00                   add    BYTE PTR [rax],al
+    2ed4:       00 00                   add    BYTE PTR [rax],al
+    2ed6:       00 00                   add    BYTE PTR [rax],al
+    2ed8:       20 02                   and    BYTE PTR [rdx],al
+    2eda:       00 00                   add    BYTE PTR [rax],al
+    2edc:       00 00                   add    BYTE PTR [rax],al
+    2ede:       00 00                   add    BYTE PTR [rax],al
+
+❯ gdb ../playground/hello-pie
+(gdb) break _start
+Breakpoint 1 at 0x1000
+(gdb) start
+Function "main" not defined.
+Starting program: /home/proseau/projects/perso/rust-executable-packer/playground/hello-pie
+Breakpoint 1, 0x0000555555555000 in _start ()
+(gdb) x/10i $pc
+=> 0x555555555000 <_start>:     mov    eax,0x1
+   0x555555555005 <_start+5>:   mov    edi,0x1
+   0x55555555500a <_start+10>:  movabs rsi,0x555555557000 <- this is different
+   0x555555555014 <_start+20>:  mov    edx,0xd
+   0x555555555019 <_start+25>:  syscall
+   0x55555555501b <_start+27>:  mov    eax,0x3c
+   0x555555555020 <_start+32>:  xor    rdi,rdi
+   0x555555555023 <_start+35>:  syscall
+   0x555555555025:      add    BYTE PTR [rax],al
+   0x555555555027:      add    BYTE PTR [rax],al
+(gdb)
+```
+
+- This is possible thanks to the `.dynamic` section of the ELF file (which is pointed to by a program header of type `PT_DYNAMIC`).
+
+- We update the parsing library to be able to parse the `PT_DYNAMIC` program header. When encountering a program header of type dynamic, we parse the corresponding segment to get a list of Dynamic Entries (a tag - ie. type - and an address or int - same byte length but can be interpreted differently according to the tag). 
+
+- Within those entries, we can find a dynamic entry of type `Rela` of which the address points to bytes which can be parsed as an array of:
+```rust
+pub struct Rela {
+    pub offset: Addr,
+    pub relocation_type: u32,
+    pub symbol: u32,
+    pub addend: Addr
+}
+```
+  This array is called the "Relocation table" (the above struct is also known as `Elf64_Rela` entry). We know how many bytes to consider for parsing the reloction table (array of `Rela`s or relocation_entry) with the information contained in the `RelaSz` dynamic entry (gives the amount of bytes to consider) and the `RelaCount` dynamic entry.
+
+- To summarise, the dynamic program header points to a list of dynamic entries, of which the `Rela` dynamic entry points to the start of the relocation table.
+
+- Note that there are different `relocation_type` for different processor, because they each have different instructions (in machine language), the instructions need to be patched differently.
+
+- We modify our parsing program such that, once we mapped the code in memory, but before we update page permissions (updating permissions could remove the writing capability), for each relocation entry in the relocation table, we update the bytes pointed to by `relocation_entry.offset` and we replace their content by `relocation_entry.addend`. The point is to update the operand of instructions that are invalid because they are relative to the where the code will be mounted (remember we generated `hello-pie` with `ld -pie`). 
+
+- Since we have added an offset, `base` (`0x40000`), before mapping the segments in memory, and we decided to update those instructions after them being mapped in memory we find the bytes to modify by adding `base`: `relocation_entry.offset + base`.
+
+- Since the only type of relocation_entry we have in our `hello-pie` ELF file is `Relative`, `relocation_entry.addend` is an address relative to the base address, so instead of updating the operand by `relocation_entry.addend` we update it with `base + relocation_entry.addend` (the operand represents an address in the executable). 
+
+- In this particular example, the last bytes of the instruction `moveabs rsi, 0x3000` are modified from `0x3000` to `0x403000 (base + 0x3000)`. This instruction was at `0x1000` in the ELF file and mounted at `base + 0x1000`. In our parsing program we map the instructions on pages at address `0x40000` moving up, so we use that latter address to find the instruction to update.
+
+- In summary, to account for position independent executables you need to:
+  - locate the relocation table thanks to the Rela, RelaSz dynamic entries in the Dynamic section (itself pointed to by the program header of type Dynamic)
+  - parse the relocation table
+  - for each relocation entry in the relocation table update the instructions pointed to (applying any modifications necessary if we are mapping instructions at a different address than the virtual address indicated in the program header)
