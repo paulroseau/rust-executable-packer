@@ -7,7 +7,7 @@
 - On Linux executables are ELF files. ELF is a binary format. There is a detail of the format of the header of an ELF file.
 
 - We start writing a parser in Rust using:
-  - the `nom` parsing library 
+  - the `nom` parsing library
   - `derive_try_from_primitive` library which provides a macro to get an enum value from a primitive type (adds a `try_from` constructor with a macro) when the enum is encoded with primitive type
   - `derive_more` library which provides a macro to derive the `Add` and `Sub` trait automatically on some types (the Address type in particular)
 
@@ -180,16 +180,16 @@ At this point we understand that `exec`:
 - Despite all of that, it segfaults when we jump to execute the code in the section containing the entrypoint. Using `ugdb` we see we jump at the entrypoint section (at address 0x400000 + entrypoint) but we quickly execute a `call` command (which is a call to a function, hence a jump) and when stepping through we are brought to address 0 which is obviously invalid...
 ```
 0x4010a0 xor    ebp,ebp                 # <- jmp gets here
-0x4010a2 mov    r9,rdx                 
-0x4010a5 pop    rsi                    
-0x4010a6 mov    rdx,rsp                
-0x4010a9 and    rsp,0xfffffffffffffff0 
-0x4010ad push   rax                    
-0x4010ae push   rsp                    
-0x4010af xor    r8d,r8d                
-0x4010b2 xor    ecx,ecx                
-0x4010b4 lea    rdi,[rip+0xe2]          # 0x40119d         
-0x4010bb call   QWORD PTR [rip+0x2eff]  # 0x403fc0 
+0x4010a2 mov    r9,rdx
+0x4010a5 pop    rsi
+0x4010a6 mov    rdx,rsp
+0x4010a9 and    rsp,0xfffffffffffffff0
+0x4010ad push   rax
+0x4010ae push   rsp
+0x4010af xor    r8d,r8d
+0x4010b2 xor    ecx,ecx
+0x4010b4 lea    rdi,[rip+0xe2]          # 0x40119d
+0x4010bb call   QWORD PTR [rip+0x2eff]  # 0x403fc0
 0x4010c1 hlt
 ...
 (gdb) print \x 0x4010c1 + 0x2eff # the comment shows which address corresponds to [rip + 0xABC]
@@ -224,7 +224,7 @@ At this point we understand that `exec`:
 
 - However since the program works when run directly (launched with `exec`) we run it directly with `ugdb` to understand what is going on:
 ```
-(gdb) break _start    
+(gdb) break _start
 Breakpoint 1 at 0x10a0
 (gdb) start
 (gdb) x/13i $pc # x = examine, 13 = count, i = format (instructions, could be x hexadecimal, d for decimal, check the help)
@@ -241,7 +241,7 @@ Breakpoint 1 at 0x10a0
    0x5555555550bb <_start+27>:  call   QWORD PTR [rip+0x2eff]   # 0x555555557fc0
    0x5555555550c1 <_start+33>:  hlt
 (gdb) x/1xg 0x555555557fc0 # x = examine, 1 = count, g = giant (8 bytes)
-0x555555557fc0: 0x00007ffff7df5700 
+0x555555557fc0: 0x00007ffff7df5700
 ```
 - We see that the address `0x00007ffff7df5700` is mapped to libc:
 ```
@@ -284,9 +284,9 @@ Breakpoint 1 at 0x10a0
 0000022B  0000              add [rax],al
 0000022D  0000              add [rax],al
 
-❯ ld hello.o -o hello 
+❯ ld hello.o -o hello
 
-❯ ndisasm -b 64 hello | grep -A5 -B5 "syscall" 
+❯ ndisasm -b 64 hello | grep -A5 -B5 "syscall"
 00000FFF  00B801000000      add [rax+0x1],bh
 00001005  BF01000000        mov edi,0x1
 0000100A  48BE002040000000  mov rsi,0x402000 <- this has been updated by `ld` (static link time)
@@ -310,7 +310,7 @@ Breakpoint 1 at 0x10a0
   401000:       b8 01 00 00 00          mov    eax,0x1
   401005:       bf 01 00 00 00          mov    edi,0x1
   40100a:       48 be 00 20 40 00 00    movabs rsi,0x402000
-  401011:       00 00 00 
+  401011:       00 00 00
   401014:       ba 0d 00 00 00          mov    edx,0xd
   401019:       0f 05                   syscall
   40101b:       b8 3c 00 00 00          mov    eax,0x3c
@@ -327,7 +327,7 @@ Disassembly of section .data:
     1000:       b8 01 00 00 00          mov    eax,0x1
     1005:       bf 01 00 00 00          mov    edi,0x1
     100a:       48 be 00 30 00 00 00    movabs rsi,0x3000 <- this has changed but still marked as moveabs
-    1011:       00 00 00 
+    1011:       00 00 00
     1014:       ba 0d 00 00 00          mov    edx,0xd
     1019:       0f 05                   syscall
     101b:       b8 3c 00 00 00          mov    eax,0x3c
@@ -362,7 +362,7 @@ Disassembly of section .dynamic:
 ```
 ❯ ./hello-pie
 zsh: no such file or directory: ./hello-pie
-❯ file hello-pie  
+❯ file hello-pie
 hello-pie: ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib/ld64.so.1, not stripped
 ❯ file /lib/ld64.so.1
 /lib/ld64.so.1: cannot open `/lib/ld64.so.1' (No such file or directory)
@@ -396,7 +396,7 @@ Disassembly of section .text:
   401000:       b8 01 00 00 00          mov    eax,0x1
   401005:       bf 01 00 00 00          mov    edi,0x1
   40100a:       48 be 00 20 40 00 00    movabs rsi,0x402000
-  401011:       00 00 00 
+  401011:       00 00 00
   401014:       ba 0d 00 00 00          mov    edx,0xd
   401019:       0f 05                   syscall
   40101b:       b8 3c 00 00 00          mov    eax,0x3c
@@ -441,7 +441,7 @@ Breakpoint 1, 0x0000000000401000 in _start ()
    0x401027:    add    BYTE PTR [rax],al
 ```
 
-- However the [PIE version](../playground/hello-pie) still has a moveabs but to the `0x3000` address which does not hold any data when looking with `objdump`. However when we execute `hello-pie` we see that `0x3000` address has been updated:
+- However the [PIE version](../playground/hello-pie) still has a `moveabs` but to the `0x3000` address which does not hold any data when looking with `objdump`. However when we execute `hello-pie`, we see that `0x3000` address has been updated:
 ```
 ❯ objdump -M intel -D hello-pie | grep -A 16 -B 10 syscall
 
@@ -451,7 +451,7 @@ Disassembly of section .text:
     1000:       b8 01 00 00 00          mov    eax,0x1
     1005:       bf 01 00 00 00          mov    edi,0x1
     100a:       48 be 00 30 00 00 00    movabs rsi,0x3000
-    1011:       00 00 00 
+    1011:       00 00 00
     1014:       ba 0d 00 00 00          mov    edx,0xd
     1019:       0f 05                   syscall
     101b:       b8 3c 00 00 00          mov    eax,0x3c
@@ -493,7 +493,7 @@ Breakpoint 1, 0x0000555555555000 in _start ()
 
 - This is possible thanks to the `.dynamic` section of the ELF file (which is pointed to by a program header of type `PT_DYNAMIC`).
 
-- We update the parsing library to be able to parse the `PT_DYNAMIC` program header. When encountering a program header of type dynamic, we parse the corresponding segment to get a list of Dynamic Entries (a tag - ie. type - and an address or int - same byte length but can be interpreted differently according to the tag). 
+- We update the parsing library to be able to parse the `PT_DYNAMIC` program header. When encountering a program header of type dynamic, we parse the corresponding segment to get a list of Dynamic Entries (a tag - ie. type - and an address or int - same byte length but can be interpreted differently according to the tag).
 
 - Within those entries, we can find a dynamic entry of type `Rela` of which the address points to bytes which can be parsed as an array of:
 ```rust
@@ -510,15 +510,222 @@ pub struct Rela {
 
 - Note that there are different `relocation_type` for different processor, because they each have different instructions (in machine language), the instructions need to be patched differently.
 
-- We modify our parsing program such that, once we mapped the code in memory, but before we update page permissions (updating permissions could remove the writing capability), for each relocation entry in the relocation table, we update the bytes pointed to by `relocation_entry.offset` and we replace their content by `relocation_entry.addend`. The point is to update the operand of instructions that are invalid because they are relative to the where the code will be mounted (remember we generated `hello-pie` with `ld -pie`). 
+- We modify our parsing program such that, once we mapped the code in memory, but before we update page permissions (updating permissions could remove the writing capability), for each relocation entry in the relocation table, we update the bytes pointed to by `relocation_entry.offset` and we replace their content by `relocation_entry.addend`. The point is to update the operand of instructions that are invalid because they are relative to the where the code will be mounted (remember we generated `hello-pie` with `ld -pie`).
 
 - Since we have added an offset, `base` (`0x40000`), before mapping the segments in memory, and we decided to update those instructions after them being mapped in memory we find the bytes to modify by adding `base`: `relocation_entry.offset + base`.
 
-- Since the only type of relocation_entry we have in our `hello-pie` ELF file is `Relative`, `relocation_entry.addend` is an address relative to the base address, so instead of updating the operand by `relocation_entry.addend` we update it with `base + relocation_entry.addend` (the operand represents an address in the executable). 
+- Since the only type of relocation_entry we have in our `hello-pie` ELF file is `Relative`, `relocation_entry.addend` is an address relative to the base address, so instead of updating the operand by `relocation_entry.addend` we update it with `base + relocation_entry.addend` (the operand represents an address in the executable).
 
 - In this particular example, the last bytes of the instruction `moveabs rsi, 0x3000` are modified from `0x3000` to `0x403000 (base + 0x3000)`. This instruction was at `0x1000` in the ELF file and mounted at `base + 0x1000`. In our parsing program we map the instructions on pages at address `0x40000` moving up, so we use that latter address to find the instruction to update.
 
 - In summary, to account for position independent executables you need to:
-  - locate the relocation table thanks to the Rela, RelaSz dynamic entries in the Dynamic section (itself pointed to by the program header of type Dynamic)
+  - find the ProgramHeader of type Dynamic, and parse its corresponding segment in an array of (tag, addr/int)
+  - identify the relocation table thanks to the dynamic entries of type (with tag) `Rela`, `RelaSz` in the Dynamic section
   - parse the relocation table
   - for each relocation entry in the relocation table update the instructions pointed to (applying any modifications necessary if we are mapping instructions at a different address than the virtual address indicated in the program header)
+
+# Part 5
+
+- This part is about how to run executables which depend on shared code which is resolved at load/run time (dynamic libraries): how to locate the dynamic libraries, load libraries and update the executable such that it references the libraries code correctly.
+
+- We start by splitting our [assembly application](../playground/hello) in 2 assembly files where one file holds the definition of `message` only. Linking the 2 object files with `ld` results in a working executable which runs fine with our [parsing executable](../elk/src/main.rs) as well.
+  ```sh
+  nasm -f elf64 hello-with-extern.asm
+  nasm -f elf64 message.asm
+  ld hello-with-extern.o message.o -o hello-with-extern
+  # or with PIE version
+  ld -pie --dynamic-linker /lib64/ld-linux-x86-64.so.2 hello-with-extern.o message.o -o hello-with-extern
+  ```
+
+- Now we make `message.o` a shared library with:
+  ```sh
+  ld -shared message.o -o libmessage.so
+  ld -pie --dynamic-linker /lib64/ld-linux-x86-64.so.2 hello-with-extern.o libmessage.so -o hello-with-extern
+  ```
+
+- But it can't execute because it can't find `libmessage.so` when loading (Analyzsing with `ldd` which resolves and prints dynamic libraries for an executable):
+```
+❯ ./hello-with-extern
+./hello-with-extern: error while loading shared libraries: libmessage.so: cannot open shared object file: No such file or directory
+
+❯ ldd ./hello-with-extern
+        linux-vdso.so.1 (0x00007ffee7350000)
+        libmessage.so => not found                 <- this is not normal!
+```
+
+- NB1: when launching an executable, you can get the interpreter to output logs by setting the `LD_DEBUG` library (this is implemented in the /lib64/ld-linux-x86-64.so.2 binary)
+  ```sh
+  LD_DEBUG=libs ./hello-with-extern
+     1396361:     find library=libmessage.so [0]; searching
+     1396361:      search cache=/etc/ld.so.cache
+     1396361:      search path=/lib/x86_64-linux-gnu/glibc-hwcaps/x86-64-v4:/lib/x86_64-linux-gnu/glibc-hwcaps/x86-64-v3:/lib/x86_64-linux-gnu/glibc-hwcaps/x86-64-v
+  2:/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu/glibc-hwcaps/x86-64-v4:/usr/lib/x86_64-linux-gnu/glibc-hwcaps/x86-64-v3:/usr/lib/x86_64-linux-gnu/glibc-hwcaps/x
+  86-64-v2:/usr/lib/x86_64-linux-gnu:/lib/glibc-hwcaps/x86-64-v4:/lib/glibc-hwcaps/x86-64-v3:/lib/glibc-hwcaps/x86-64-v2:/lib:/usr/lib/glibc-hwcaps/x86-64-v4:/usr/l
+  ib/glibc-hwcaps/x86-64-v3:/usr/lib/glibc-hwcaps/x86-64-v2:/usr/lib              (system search path)
+     1396361:       trying file=/lib/x86_64-linux-gnu/glibc-hwcaps/x86-64-v4/libmessage.so
+     1396361:       trying file=/lib/x86_64-linux-gnu/glibc-hwcaps/x86-64-v3/libmessage.so
+     1396361:       trying file=/lib/x86_64-linux-gnu/glibc-hwcaps/x86-64-v2/libmessage.so
+     1396361:       trying file=/lib/x86_64-linux-gnu/libmessage.so
+     ...
+  ```
+
+- NB2: an interpreter does not depend on any shared dependencies, those are statically linked:
+  ```
+  ❯ ldd /lib64/ld-linux-x86-64.so.2
+          statically linked   <- objdump -M intel -d /lib64/ld-linux-x86-64.so.2
+                                 will show you that libc methods are embedded in the binary itself
+  ❯ # VS
+  ❯ ldd /bin/cat
+          linux-vdso.so.1 (0x00007ffe935d2000)
+          libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007fae4e68b000)
+          /lib64/ld-linux-x86-64.so.2 (0x00007fae4e88f000)
+  ```
+
+- The reason why `./hello-with-extern` cannot execute with the shared library is because the binary's search path does not contain the directory where `./libmessage.so` is. You can change that by setting the `RPATH` or `RUNPATH` (we don't cover this one) of the executable when building it to add paths to the builtin search path of the interpreter. You can also update the search path at runtime with `LD_LIBRARY_PATH=./path1:./path2` to instruct the interpreter to add these paths to its path.
+  ```sh
+  ❯ ld \
+    -pie \
+    -rpath . \
+    --dynamic-linker /lib64/ld-linux-x86-64.so.2 \
+    -o hello-with-extern \
+    hello-with-extern.o libmessage.so
+
+  ❯ ./hello-with-extern # works!
+
+  ❯ objdump -p hello-with-extern | grep PATH  # -p prints private headers
+    RUNPATH              .
+  ```
+
+NB: `-rpath .` will cause the binary to fail to load its dynamic libaries if the `CWD` is not where the library is. Instead you can use `-rpath '$ORIGIN'` to instruct the interpreter to add to the search path the parent directory of the executable file itself (however if you move the binary to a different location it will fail to load its libraries as well)
+
+- Our parsing program fails to run our assembly program linked against a shared library, because our Rust code does not include anything to look for the shared library, it neither loads it and nor resovles references. When analyzing the execution of `./hello-with-extern` by our parsing/execution program through `ugdb` we realize that the address for the `message` is still `0x0` (operand `movabs`) which means some relocation is not applied by our parsing/execution program despite the work we did earlier to relocate code that was linked with `-pie`.
+
+- Running the binary directly (not through our custom parser/executer program) and analyzing with `ugdb` and `cat /proc/<pid>/maps` we see that:
+  - the `libmessage.so` library has been mapped into the process library at some high address (`0x7fff...`)
+  - the address operand for moveabs has been replaced to some address close to the instructions (`0x555555557000`), just like before
+
+  ```
+  ❯ gdb ./hello-with-extern
+  GNU gdb (GDB) 14.1
+  Reading symbols from ./hello-with-extern...
+  (No debugging symbols found in ./hello-with-extern)
+  (gdb) break _start
+  Breakpoint 1 at 0x1000
+  (gdb) x/10i 0x1000
+     0x1000 <_start>:     mov    eax,0x1
+     0x1005 <_start+5>:   mov    edi,0x1
+     0x100a <_start+10>:  movabs rsi,0x0          <- this is how the instructions are written
+     0x1014 <_start+20>:  mov    edx,0x2e
+     0x1019 <_start+25>:  syscall
+     0x101b <_start+27>:  mov    eax,0x3c
+     0x1020 <_start+32>:  xor    rdi,rdi
+     0x1023 <_start+35>:  syscall
+     0x1025:      Cannot access memory at address 0x1025
+  (gdb) start
+
+  Breakpoint 1, 0x0000555555555000 in _start ()
+  (gdb) x/10i $pc
+  => 0x555555555000 <_start>:     mov    eax,0x1
+     0x555555555005 <_start+5>:   mov    edi,0x1
+     0x55555555500a <_start+10>:  movabs rsi,0x555555557000  <- once the executable is started, a relocation is applied
+     0x555555555014 <_start+20>:  mov    edx,0x2e
+     0x555555555019 <_start+25>:  syscall
+     0x55555555501b <_start+27>:  mov    eax,0x3c
+     0x555555555020 <_start+32>:  xor    rdi,rdi
+     0x555555555023 <_start+35>:  syscall
+     0x555555555025:      add    BYTE PTR [rax],al
+     0x555555555027:      add    BYTE PTR [rax],al
+  ```
+
+and
+  ```
+  ❯ cat /proc/1524648/maps
+  555555554000-555555555000 r--p 00000000 fd:01 5115391                    /home/proseau/projects/perso/rust-executable-packer/playground/hello-with-extern
+  555555555000-555555556000 r-xp 00001000 fd:01 5115391                    /home/proseau/projects/perso/rust-executable-packer/playground/hello-with-extern
+  555555556000-555555557000 r--p 00002000 fd:01 5115391                    /home/proseau/projects/perso/rust-executable-packer/playground/hello-with-extern
+  555555557000-555555558000 rw-p 00000000 00:00 0                          [heap]
+  7ffff7fc0000-7ffff7fc1000 r--p 00000000 fd:01 5113041                    /home/proseau/projects/perso/rust-executable-packer/playground/libmessage.so
+  7ffff7fc1000-7ffff7fc2000 r--p 00001000 fd:01 5113041                    /home/proseau/projects/perso/rust-executable-packer/playground/libmessage.so
+  7ffff7fc2000-7ffff7fc3000 rw-p 00002000 fd:01 5113041                    /home/proseau/projects/perso/rust-executable-packer/playground/libmessage.so
+  7ffff7fc3000-7ffff7fc5000 rw-p 00000000 00:00 0
+  7ffff7fc5000-7ffff7fc9000 r--p 00000000 00:00 0                          [vvar]
+  7ffff7fc9000-7ffff7fcb000 r-xp 00000000 00:00 0                          [vdso]
+  7ffff7fcb000-7ffff7fcc000 r--p 00000000 fd:01 4456581                    /usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2
+  7ffff7fcc000-7ffff7ff1000 r-xp 00001000 fd:01 4456581                    /usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2
+  7ffff7ff1000-7ffff7ffb000 r--p 00026000 fd:01 4456581                    /usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2
+  7ffff7ffb000-7ffff7fff000 rw-p 00030000 fd:01 4456581                    /usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2
+  7ffffffde000-7ffffffff000 rw-p 00000000 00:00 0                          [stack]
+  ```
+
+- We update our parsing code to understand more relocation entry (so far we only interpreted the entries of type `Relative`). In particular we notice that when linked to a shared library (ie. library to load dynamically), the `Relative` entry is gone, but we now have 2 entries: one of type `64` and one of type `Copy`, and both of them have their symbol field set to `1` (it was `0` when not dynamically linking). 
+
+  ```
+  # Case with PIE linking but no shared library
+  Found 1 relocation entries
+  - Rela { offset: 0000100c, relocation_type: Known(Relative), symbol: 0, addend: 00003000 }
+
+  # VS
+
+  # Case with dynamic linking to libmessage.so
+  Found 2 relocation entries
+  - Rela { offset: 0000100c, relocation_type: Known(_64), symbol: 1, addend: 00000000 }
+  - Rela { offset: 00003000, relocation_type: Known(Copy), symbol: 1, addend: 00000000 }
+  ```
+
+- Also we notice that new dynamic entries are in the dynamic table (pointed to by the program header of type `Dynamic`):
+  ```
+  Dynamic entries
+  - DynamicEntry { tag: Needed, addr: 00000009 }   <- this is new
+  - DynamicEntry { tag: RunPath, addr: 00000017 }  <- this is new
+  - DynamicEntry { tag: Hash, addr: 00000220 }
+  - DynamicEntry { tag: GnuHash, addr: 00000238 }
+  - DynamicEntry { tag: StrTab, addr: 00000290 }
+  - DynamicEntry { tag: SymTab, addr: 00000260 }   <- address of the symbol table
+  - DynamicEntry { tag: StrSz, addr: 0000001f }
+  - DynamicEntry { tag: SymEnt, addr: 00000018 }
+  - DynamicEntry { tag: Debug, addr: 00000000 }
+  - DynamicEntry { tag: Rela, addr: 000002b0 }
+  - DynamicEntry { tag: RelaSz, addr: 00000030 }
+  - DynamicEntry { tag: RelaEnt, addr: 00000018 }
+  - DynamicEntry { tag: TextRel, addr: 00000000 }
+  - DynamicEntry { tag: Flags, addr: 00000004 }
+  - DynamicEntry { tag: Flags1, addr: 08000000 }
+  ```
+
+- Our assumption at this point is that the dynamic loader:
+  - finds the shared library through the Needed / RunPath dynamic entries (these probably point to entries in the String Table which is pointed to by `StrTab`)
+  - loads the shared libraries in memory
+  - uses the Relocation entries in the Relocation table (pointed to by the `Rela` dynamic entry in the dynamic table) to copy data (the message data in this case) from the shared library to another location in memory and to update the references to that data (for the `moveabs`)
+
+- To be able to look at the needed libraries and runpath, we will need to look at the offset they point to into the String Table `StrTab` until we find a null character (`\00`):
+```
+❯ dd status=none if=./hello-with-extern bs=1 skip=$((0x290)) count=$((0x1f)) | xxd 
+00000000: 006d 6573 7361 6765 006c 6962 6d65 7373  .message.libmess
+00000010: 6167 652e 736f 0024 4f52 4947 494e 00    age.so.$ORIGIN.
+```
+
+- To be able to link code from the shared library in the final executable, we need to make use of the Symbol table.
+
+- The DynamicEntry for `SymTab` actually points to an address in the file (`0x260` in this case), but we don't know how long the Symbol table is. 
+
+- We need to modify our parsing program to also parse section headers. There is actually a section header of which the `address` field matches the value of the `SymTab` dynamic entry and its `entry_size` field matches the value of the `SymEnt` dynamic entry.
+```
+Section headers:
+SectionHeader { name: 00000000, section_type: 0, flags: 0, address: 00000000, offset: 00000000, size: 00000000, link: 0, info: 0, align: 00000000, entry_size: 00000000 }
+SectionHeader { name: 0000001b, section_type: 1, flags: 2, address: 00000200, offset: 00000200, size: 0000001c, link: 0, info: 0, align: 00000001, entry_size: 00000000 }
+SectionHeader { name: 00000027, section_type: 5, flags: 2, address: 00000220, offset: 00000220, size: 00000014, link: 4, info: 0, align: 00000008, entry_size: 00000004 }
+SectionHeader { name: 00000023, section_type: 1879048182, flags: 2, address: 00000238, offset: 00000238, size: 00000024, link: 4, info: 0, align: 00000008, entry_size: 00000000 }
+# This one corresponds to the symbol table and gives us the size of the Symbol table (30)
+SectionHeader { name: 0000002d, section_type: 11, flags: 2, address: 00000260, offset: 00000260, size: 00000030, link: 5, info: 1, align: 00000008, entry_size: 00000018 }
+SectionHeader { name: 00000035, section_type: 3, flags: 2, address: 00000290, offset: 00000290, size: 0000001f, link: 0, info: 0, align: 00000001, entry_size: 00000000 }
+SectionHeader { name: 0000003d, section_type: 4, flags: 2, address: 000002b0, offset: 000002b0, size: 00000030, link: 4, info: 0, align: 00000008, entry_size: 00000018 }
+SectionHeader { name: 00000047, section_type: 1, flags: 6, address: 00001000, offset: 00001000, size: 00000025, link: 0, info: 0, align: 00000010, entry_size: 00000000 }
+SectionHeader { name: 0000004d, section_type: 1, flags: 2, address: 00002000, offset: 00002000, size: 00000000, link: 0, info: 0, align: 00000008, entry_size: 00000000 }
+SectionHeader { name: 00000057, section_type: 6, flags: 3, address: 00002eb0, offset: 00002eb0, size: 00000150, link: 5, info: 0, align: 00000008, entry_size: 00000010 }
+SectionHeader { name: 00000060, section_type: 8, flags: 3, address: 00003000, offset: 00003000, size: 00000030, link: 0, info: 0, align: 00000004, entry_size: 00000000 }
+SectionHeader { name: 00000001, section_type: 2, flags: 0, address: 00000000, offset: 00003000, size: 000000d8, link: 12, info: 4, align: 00000008, entry_size: 00000018 }
+SectionHeader { name: 00000009, section_type: 3, flags: 0, address: 00000000, offset: 000030d8, size: 00000040, link: 0, info: 0, align: 00000001, entry_size: 00000000 }
+SectionHeader { name: 00000011, section_type: 3, flags: 0, address: 00000000, offset: 00003118, size: 00000065, link: 0, info: 0, align: 00000001, entry_size: 00000000 }
+```
+
+- After finding the section header which holds all the information (address, size, number of entry) about the symbol table we can parse all the symbols. In this case we have 2 symbols (`echo "$((0x30)) / $((0x18))"`

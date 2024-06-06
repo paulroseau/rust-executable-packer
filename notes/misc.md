@@ -164,3 +164,51 @@ impl<T, A: Allocator> IntoIterator for Vec<T, A> {
     }
   }
   ```
+
+# Closures in Rust
+
+- Closures get implemented through a struct and an implementation of the `FnOnce`, `FnMut` or `Fn` trait. From [Rust reference](https://doc.rust-lang.org/reference/types/closure.html):
+```rust
+fn f<F : FnOnce() -> String> (g: F) {
+    println!("{}", g());
+}
+
+let mut s = String::from("foo");
+let t = String::from("bar");
+
+f(|| {
+    s += &t;
+    s
+});
+// Prints "foobar".
+```
+
+generates a closure type roughly like the following:
+```rust
+struct Closure<'a> {
+    s : String,
+    t : &'a String,
+}
+
+impl<'a> FnOnce<()> for Closure<'a> {
+    type Output = String;
+    fn call_once(self) -> String {
+        self.s += &*self.t;
+        self.s
+    }
+}
+```
+
+so that the call to f works as if it were:
+
+```rust
+f(Closure{s: s, t: &t});
+```
+
+- By default a closure borrows variable immutably. If you want a closure to make use of the `Clone` capability of a variable in the environment it tries to capture, you still need to add the `move` keyword (just like regular functions take ownership or copy a variable when the "plain" variable (not a reference is passed in the arguments).
+
+- The compiler prefers to capture a closed-over variable by immutable borrow, followed by unique immutable borrow (see below), by mutable borrow, and finally by move. It will pick the first choice of these that is compatible with how the captured variable is used inside the closure body.
+
+# .iter on a Vec
+
+To check, `.iter()` is not defined on `Vec<T>` but on `[T]`. Yet you can use it on a vec... How does the conversion from `Vec<T>` to `[T]` is done?

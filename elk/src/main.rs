@@ -1,5 +1,11 @@
 use core::panic;
-use std::{env, error::Error, fs, io::Write, process::{Command, Stdio}};
+use std::{
+    env,
+    error::Error,
+    fs,
+    io::Write,
+    process::{Command, Stdio}
+};
 
 use delf::{SegmentContent, SegmentType};
 use mmap::{MemoryMap, MapOption};
@@ -8,7 +14,7 @@ use region::{protect, Protection};
 fn main() -> Result<(), Box<dyn Error>> {
     let input_path = env::args().nth(1).expect("usage: elk <FILE>");
 
-    println!("Analyzsing {:?}", input_path);
+    println!("Analyzing {:?}", input_path);
     let input = fs::read(&input_path)?;
 
     let file =
@@ -28,19 +34,19 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // the entry_point is not necessarily the start of the section pointed to by the program header
     // data (offset -> offset + memsize)
-    ndisasm(&entry_point_program_header.data[..], file.entry_point)?;
-
-    let base = 0x400000_usize;
-
-    // we'll need to hold onto our "mmap::MemoryMap", because dropping them
-    // unmaps them!
-    let mut mappings = Vec::new();
+    ndisasm(&entry_point_program_header.data[..], entry_point_program_header.segment_offset)?;
 
     println!("Dynamic entries");
     if let Some(dynamic_program_header) = file.program_header_for_type(SegmentType::Dynamic) {
         if let SegmentContent::Dynamic(ref entries) = dynamic_program_header.content {
             for entry in entries {
                 println!("- {:?}", entry);
+                match entry.tag {
+                    delf::DynamicTag::Needed | delf::DynamicTag::RunPath => {
+                        println!("  => {:?}", file.get_string(entry.addr)?);
+                    }
+                    _ => {}
+                }
             }
         }
     }
@@ -49,16 +55,56 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("Relocation table");
     let relocation_table = file.relocation_table().unwrap_or_else(|e| {
         println!("Could not find relocation table: {:?}", e);
-        Default::default() // resolve to empty Vec
+        Default::default() // resolves to empty Vec
     });
 
+    println!("Found {} relocation entries", relocation_table.len());
     for relocation_entry in relocation_table.iter() {
-        println!("{:#?}", relocation_entry);
+        println!("- {:?}", relocation_entry);
         if let Some(program_header) = file.program_header_for_load_segment_at(relocation_entry.offset) {
-            println!("{:?}", program_header);
+            println!("  for program_header: {:?}", program_header);
         }
     }
     println!("");
+
+
+    println!("Section headers");
+    for section_header in file.section_headers.iter() {
+        println!("{:?}", section_header);
+    }
+    println!("");
+
+    print!("Symbols");
+    let symbols = file.read_symbols().unwrap();
+    println!(
+        "Symbol table @ {:?} contains {} entries",
+        file.dynamic_entry(delf::DynamicTag::SymTab).unwrap(),
+        symbols.len(),
+    );
+    for (num, symbol) in symbols.iter().enumerate() {
+         println!(
+            "  {:6}{:12}{:10}{:16}{:16}{:12}{:12}",
+            format!("{}", num),
+            format!("{:?}", symbol.value),
+            format!("{:?}", symbol.size),
+            format!("{:?}", symbol.symbol_type),
+            format!("{:?}", symbol.bind),
+            format!("{:?}", symbol.shndx),
+            format!("{}", file.get_string(symbol.name).unwrap_or_default()),
+        );
+
+        if file.get_string(symbol.name).unwrap_or_default() == "message" {
+            let slice = file.slice_at(symbol.value).expect("There should be a symbol");
+            let slice = &slice[..symbol.size as usize];
+            println!("message = {:?}", String::from_utf8_lossy(slice));
+        }
+    }
+
+    // we'll need to hold onto our "mmap::MemoryMap", because dropping them
+    // unmaps them!
+    let mut mappings = Vec::new();
+
+    let base = 0x400000_usize;
 
     // we're only interested in "Load" segments
     for program_header in file
@@ -107,15 +153,18 @@ fn main() -> Result<(), Box<dyn Error>> {
                 );
 
                 match relocation_entry.relocation_type {
-                    delf::RelocationType::Relative => {
+                    delf::RelocationType::Known(delf::KnownRelocationType::Relative) => {
                         let relocation_value = base as u64 + relocation_entry.addend.0;
                         println!("Replacing with value {:?}", relocation_value);
                         unsafe {
                             std::ptr::write_unaligned(relocation_address, relocation_value as _);
                         }
                     }
-                    relocation_type => {
+                    delf::RelocationType::Known(relocation_type) => {
                         panic!("Unsupported relocation type {:?}", relocation_type);
+                    }
+                    delf::RelocationType::Unknown(relocation_type) => {
+                        println!("Unsupported relocation type {:?}", relocation_type);
                     }
                 }
             }
