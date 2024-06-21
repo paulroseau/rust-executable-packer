@@ -2,8 +2,7 @@
 
 Source: https://www.geeksforgeeks.org/function-pointer-in-c/
 
-To declare a pointer to a function you need to use `()` to force the application
-of the `*` operator to the name of the function: 
+To declare a pointer to a function you need to use `()` to force the application of the `*` operator to the name of the function: 
 ```c 
 int (*foo)(int) = &main;
 ```
@@ -12,8 +11,7 @@ Also note that, unlike normal pointers:
 - a function pointer points to code, not data. Typically a function pointer stores the start of executable code.
 - using function pointers does not allocate de-allocate memory
  
-A function's name can also be used to get functions' address. For example, the
-two programs below are equivalent:
+A function's name can also be used to get functions' address. For example, the two programs below are equivalent:
 ```c
 #include <stdio.h> 
 void fun(int a) { 
@@ -56,12 +54,9 @@ int main() {
 
 # nm and readelf
 
-- `nm` reads the `.symtab` section of an ELF file, while `readelf -s` reads both
-  the `.symtab` and the `.dynsym` section.
+- `nm` reads the `.symtab` section of an ELF file, while `readelf -s` reads both the `.symtab` and the `.dynsym` section.
 
-- When you run `strip <elf-file>` it removes what is not necessary at runtime,
-that is the `.symtab` (which is informational), but it preserves the `.dynsym`.
-After you `strip`ed an ELF file, `nm` shows no symbols.
+- When you run `strip <elf-file>` it removes what is not necessary at runtime, that is the `.symtab` (which is informational), but it preserves the `.dynsym`. After you `strip`ed an ELF file, `nm` shows no symbols.
 
 - It is better to use `readelf` with the `-W` (wide) option.
 
@@ -142,8 +137,7 @@ Symbol table '.dynsym' contains 12 entries:
 
 # Vec and iterators in Rust
 
-- Rust automatically adds the `.into_iter()` function implicitly when using a
-`for` loop over a vector. 
+- Rust automatically adds the `.into_iter()` function implicitly when using a `for` loop over a vector. 
 
 - `fn into_iter(self)` comes from the implementation of
 ```rust
@@ -152,8 +146,7 @@ impl<T, A: Allocator> IntoIterator for Vec<T, A> {
 }
 ```
 
-- When using a for loop with a reference to a vector the implementation returns
-  an immutable iterator which does not own the arguments:
+- When using a for loop with a reference to a vector the implementation returns an immutable iterator which does not own the arguments:
   ```rust
   impl<'a, T, A: Allocator> IntoIterator for &'a Vec<T, A> {
     type Item = &'a T;
@@ -212,3 +205,31 @@ f(Closure{s: s, t: &t});
 # .iter on a Vec
 
 To check, `.iter()` is not defined on `Vec<T>` but on `[T]`. Yet you can use it on a vec... How does the conversion from `Vec<T>` to `[T]` is done?
+
+# Inlining Assembly in C
+
+- `gcc` understands assembly which can be inlined inside a C program following a particular syntax that looks like:
+```c
+void ftl_print(char *msg) {
+    // this is a little ad-hoc "strlen"
+    int len = 0;
+    while (msg[len]) {
+        len++;
+    }
+
+    __asm__ (
+            " \
+            mov      $1, %%rdi \n\t\
+            mov      %[msg], %%rsi \n\t\
+            mov      %[len], %%edx \n\t\
+            mov      $1, %%rax \n\t\
+            syscall"
+            // outputs
+            :
+            // inputs
+            : [msg] "r" (msg), [len] "r" (len)
+            );
+}
+```
+
+- The complete documentation is [here](https://gcc.gnu.org/onlinedocs/gcc/Extended-Asm.html)

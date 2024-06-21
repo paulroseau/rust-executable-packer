@@ -1,4 +1,4 @@
-# Part1: What's in a Linux executable?
+# Part 1: What's in a Linux executable?
 
 - We write a simple [assembly program](../playground/hello.asm) using `nasm` and make an executable out of it. This program calls the `write` system call and the `exit` system call.
 
@@ -21,7 +21,7 @@
   1. it is bigger than the size of the executable
   2. it does not necessarily match the actual start of a program such as for `/bin/true` or for our simple [C program](../playground/entry_point.c)
 
-# Part2: Running an executable without exec
+# Part 2: Running an executable without exec
 
 - We modify our parsing program to also run the program afterwards.
 
@@ -657,7 +657,7 @@ and
   7ffffffde000-7ffffffff000 rw-p 00000000 00:00 0                          [stack]
   ```
 
-- We update our parsing code to understand more relocation entry (so far we only interpreted the entries of type `Relative`). In particular we notice that when linked to a shared library (ie. library to load dynamically), the `Relative` entry is gone, but we now have 2 entries: one of type `64` and one of type `Copy`, and both of them have their symbol field set to `1` (it was `0` when not dynamically linking). 
+- We update our parsing code to understand more relocation entry (so far we only interpreted the entries of type `Relative`). In particular we notice that when linked to a shared library (ie. library to load dynamically), the `Relative` entry is gone, but we now have 2 entries: one of type `64` and one of type `Copy`, and both of them have their symbol field set to `1` (it was `0` when not dynamically linking).
 
   ```
   # Case with PIE linking but no shared library
@@ -699,14 +699,14 @@ and
 
 - To be able to look at the needed libraries and runpath, we will need to look at the offset they point to into the String Table `StrTab` until we find a null character (`\00`):
 ```
-❯ dd status=none if=./hello-with-extern bs=1 skip=$((0x290)) count=$((0x1f)) | xxd 
+❯ dd status=none if=./hello-with-extern bs=1 skip=$((0x290)) count=$((0x1f)) | xxd
 00000000: 006d 6573 7361 6765 006c 6962 6d65 7373  .message.libmess
 00000010: 6167 652e 736f 0024 4f52 4947 494e 00    age.so.$ORIGIN.
 ```
 
 - To be able to link code from the shared library in the final executable, we need to make use of the Symbol table.
 
-- The DynamicEntry for `SymTab` actually points to an address in the file (`0x260` in this case), but we don't know how long the Symbol table is. 
+- The DynamicEntry for `SymTab` actually points to an address in the file (`0x260` in this case), but we don't know how long the Symbol table is.
 
 - We need to modify our parsing program to also parse section headers. There is actually a section header of which the `address` field matches the value of the `SymTab` dynamic entry and its `entry_size` field matches the value of the `SymEnt` dynamic entry.
 ```
@@ -729,3 +729,82 @@ SectionHeader { name: 00000011, section_type: 3, flags: 0, address: 00000000, of
 ```
 
 - After finding the section header which holds all the information (address, size, number of entry) about the symbol table we can parse all the symbols. In this case we have 2 symbols (`echo "$((0x30)) / $((0x18))"`
+
+# Part 6: Loading multiple ELF objects
+
+- An ELF file can be either an executable or a library. When loading an executable, the loader needs to look at the `NEEDED` dynamic entry as well as the `RUNPATH` dynamic entry to locate all the necessary libraries. These need to be loaded in a BFS order
+
+# Part 7: Dynamic symbol resolution
+
+- Running an executable requires to load various files (the executable file and its dynamic libraries). For each of these files you need to load several segments (pointed to by Program Headers of type `Load`). We need to compute a virtual address range necessary for all segments of each file, such that we can load each file in a distinct address space (ie. from a different base address). We need to take care to segments that are not page aligned, and add the corresponding padding. Once those ranges are determined, we can map the content of each segment of each file to the memory ranges computed. (Contrarily to what we have done previously, we don't copy the bytes from the file, we map them directly using `MemoryMap` which accepts `MapOption::MapFd` file descriptor).
+
+- A trick is that when the object `MemoryMap` goes out of scope the `drop` method actually calls `unmap`. To prevent that we instantiate `MemoryMap` with:
+```rust
+let mem_map = std::mem::ManuallyDrop::new(MemoryMap::new(mem_size, &[])?);
+```
+
+- We then need to apply relocations on all files (libraries) in reverse order to how we loaded them.
+
+# Part 8: Dynamic linker speed and correctness
+
+- This is a refactoring part.
+
+- The only thing we changed is to take into account executables with a `.bss` section which holds uninitialized data that contribute to the program's memory image. By definition, the system initializes the data with zeros when the program begins to run. The section occupies no file space. We need to make sure we zero out the bits beyond the file size (up to the end of the memory range to which the section is mapped).
+
+# Part 9: GDB scripting and Indirect functions
+
+- Our linker can load C applications that don't rely on `glibc`. We can test that by inlining assembly code (which end up calling `syscall`) inside C code and by compiling through `gcc` with the option `-nodefaultlibs`.
+
+- `glibc` actually has several implementation of C functions depending on the hardware used. To resolve the right implementation when loading the code we need to run some subroutine. To indicate that a Symbol (such as a C function of which implementation depends on the hardware) needs to be resovled through some execution, that symbol is marked of type `STT_GNU_IFUNC`. (new symbol type unseen so far)
+
+- We create our own [C program](../playground/ifunc-nolibc.c) using the `ifunc` in the implementation of the `get_msg` function to indicate that the value (ie. the address) of that function will be known at load time after running the `resolve_get_msg` function:
+```c
+char *get_msg() __attribute__ ((ifunc ("resolve_get_msg")));
+```
+
+- We then try to run it, but prior to that we display how we can extend `gdb` to get more information. Since we use `gdb` against our own linker, `elk`, `gdb` does not read the symbol table of the executable we load through `elk`. Hence we want to extend `gdb` to display details about an address (which file it comes from, location in the file, which section, name of the symbol if matching any).
+
+- We learn that `gdb` is able to source python scripts (ie. it has a python interpreter inside it). In those scripts you can make use of the `gdb` object to automate commands, for example:
+```py
+pid = gdb.selected_inferior().pid
+print("the inferior's PID is %d" % pid)
+```
+
+- You can also add `gdb` commands in a python script that you would source with:
+```py
+class MyCommand(gdb.Command):
+    """Help on my command"""
+
+    def __init__(self):
+        #todo
+
+    def invoke(self, arg, from_tty):
+        #todo
+```
+
+- There is also the builtin `add-symbol-file` gdb command which you can use to indicate to gdb to load more symbols from a particular file at a particular address (the address of the symbol table)
+
+- The approach taken in this part is convoluted, we resolve the PID of the program we are running (the pid of `elk <args>`), print the corresponding memory mapping `cat /proc/<pid>/map` and parse the output. We create subcommands to resolve the relevant information for a particular address from that data structure built from the memory mappings. We then create a python script which defines gdb command around `elk` and load that python script in `.gdbinit` such that we can run these gdb commands automatically.
+
+- We see that when trying to execute our [C program](../playground/ifunc-nolibc.c) which makes use of `ifunc`, we reach a point when the assembly in `gdb` shows `call <some-address>`. Despite our gdb extensions, no symbol match `<some-address>`. `<some-address>` actually is the result of the mapping of some address in the `.plt` section.
+
+- PLT stands for Procedure Linkage Table. It is part of the implementation of `ifunc` which allows for dynamic loading of functions. At load time, the loader is supposed to run whatever code is referred by `ifunc` (in the [C program](../playground/ifunc-nolibc.c) that is `resolve_get_msg`) which will return the address of the actual function to call in the future. 
+
+- In practice, the `jmp` to the `function@plt` actually jumps to the GOT (Global Offset Table) which holds the address of the function to call. The GOT table gets populated when calling `function@plt` the first time which falls back to having the loader run the `ifunc` part if `function@plt` points to a GOT table entry that is empty.
+
+- More on GOT and PLT: https://ir0nstone.gitbook.io/notes/types/stack/aslr/plt_and_got
+
+- We need to apply another relocation type so the address of `function@plt` is not hardcoded in the code but its corresponding virtual address is. Also we instruct in the loader when applying the relocation to first run the function
+```rust
+RT::IRelative => unsafe { objrel.addr().set(obj.base + addend); }
+```
+into
+```rust
+ RT::IRelative => unsafe {
+    // new! and *very* unsafe!
+    let selector: extern "C" fn() -> delf::Addr = std::mem::transmute(obj.base + addend);
+    objrel.addr().set(selector()); // runs the ifunc routine to resolve the right address to write in the GOT table and to apply in relocation!
+},
+ ```
+
+- This implies to make the pages RWX when loading everything before adjusting protections.
