@@ -11,6 +11,8 @@ use delf::{SegmentContent, SegmentType};
 use mmap::{MemoryMap, MapOption};
 use region::{protect, Protection};
 
+mod process;
+
 fn main() -> Result<(), Box<dyn Error>> {
     let input_path = env::args().nth(1).expect("usage: elk <FILE>");
 
