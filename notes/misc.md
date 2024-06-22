@@ -233,3 +233,67 @@ void ftl_print(char *msg) {
 ```
 
 - The complete documentation is [here](https://gcc.gnu.org/onlinedocs/gcc/Extended-Asm.html)
+
+# Note on the "extern" keyword
+
+- Source: https://www.reddit.com/r/rust/comments/17f78mb/what_is_extern_system/
+
+- `extern` is the keyword Rust uses to select calling convention. A calling convention defines how a function is called: where are its arguments (on the stack? in registers? A mix?), in which register or stack location is stored the return address etc. When linking to external code (ie. code you don't compile yourself) it is important to tell the compiler which calling convention the code you link to uses so it can generate the proper binary: place the return address, arguments, etc. in the right registers/memory address (on the stack); store the registers that are caller saved on the stack (ie. which the callee - the called function - could alter), etc.
+
+- So actually `extern` is a linkage modifier that tells the compiler to link to a non-Rust function and generate code for calls using the calling convention appropriate for the APIs of the operating system. For example `extern "C"` tells Rust to use the calling convention commonly used by C compilers for normal libraries. `extern "system"` picks the convention used by system libraries. On Unix, this is equivalent to `extern "C"`, but on Windows, the calling convention used by system libraries is different from the one used by common C libraries. (The reason for this is that these system libraries tried to maintain compatibility with pre-C code, but their ABI couldn't handle important C features like variadic functions.)
+
+# Functions that never returns
+
+- A function that "returns" translates actually to machine code that will store the return address (the next location of the PC) inside a register prior to updating the PC. From your notes on Computer Architecture, this translates to the `jalr` instructions from the RISC-V ABI, which we can pseudo-implement in hardware wiring (bluespec) as:
+  ```
+  jalr rd, 0(rs1)
+  // performs
+  R[rd] <- pc + 4; // saves the old PC in rd
+  pc <- R[rs1] & ~0x01
+  ```
+
+- You might not want a function to return, basically making it a `goto`, that is you want the compiler to generate a `jalr x0, 0(rs1)`. To do so in Rust you can use the following syntax (example from the `jmp` function):
+```rust
+unsafe fn jmp(addr: *const u8) -> ! {
+    // spread across two lines for readability
+    type EntryPoint = unsafe extern "C" fn() -> !; // the ! indicates no return
+    let entry_point: EntryPoint = std::mem::transmute(addr);
+    entry_point();
+}
+...
+
+fn main() -> Result<(), AnyError> {
+    ...
+    if (...) {
+      return Ok(())
+    }
+
+    unsafe { jmp(addr) }
+    // no need to add code here, Rust understands we will never return, this will compile
+}
+```
+
+# Move values
+
+- When returning a value from inside a function, think that you are actually "moving" the value. You can think that the bytes pointed to by its address in memory (some address inside the callee's stack frame) are copied to some other are now referred to by an address in the caller's stack frame. In practice the bytes on the heap might not copied (the address in the caller's stack frame could be updated to the address that was in the callee's stack frame. However the compiler does not assume this light address manipulation occurs. This probably gives flexibility to the memory deallocator which should kick in (prior/after?) returning: it could be more beneficial to copy wipe out the memory pointed by variables local to the callee's scope and copy the bytes of the moved variable to some other location to compact the heap, or not.
+
+- Hence this does not compile, because Rust can see that `res.slice_of_vec` is assigned a value `&res.vec[2..3]` which points to an address that won't be valid outside of the stack frame of `make_container`.
+```rust
+struct Container<'a> {
+    vec: Vec<u8>,
+    slice_of_vec: Option<&'a [u8]>,
+}
+
+fn test() 
+    let make_container = || {
+        let vec = vec![1, 2, 3, 4, 5];
+        let mut res = Container { // <- here res's address is on the stack frame of the make_container closure
+            vec,
+            slice_of_vec: None,
+        };
+        res.slice_of_vec = Some(&res.vec[2..3]); // <- slice_of_vec is set here to an address in that stack frame (a new address 0xabc because we are using a reference, but that new address points to the same bytes as res.vec address does)
+        res // <- moving res out !
+    };
+
+    let a = make_container(); // res bytes are now pointed to by another address, the address of a (which owns them). Also at this point a.slice_of_vec (which is worth 0xabc) is equal to an address that is no longer considered valid, even though it is still pointing to the same bytes as before (the compiler does not see that, it just sees that the reference points to data that was moved and hence could have been copied elsewhere on the heap).
+```

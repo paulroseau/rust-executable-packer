@@ -524,7 +524,7 @@ pub struct Rela {
   - parse the relocation table
   - for each relocation entry in the relocation table update the instructions pointed to (applying any modifications necessary if we are mapping instructions at a different address than the virtual address indicated in the program header)
 
-# Part 5
+# Part 5: The simplest shared library 
 
 - This part is about how to run executables which depend on shared code which is resolved at load/run time (dynamic libraries): how to locate the dynamic libraries, load libraries and update the executable such that it references the libraries code correctly.
 
@@ -757,10 +757,12 @@ let mem_map = std::mem::ManuallyDrop::new(MemoryMap::new(mem_size, &[])?);
 
 - `glibc` actually has several implementation of C functions depending on the hardware used. To resolve the right implementation when loading the code we need to run some subroutine. To indicate that a Symbol (such as a C function of which implementation depends on the hardware) needs to be resovled through some execution, that symbol is marked of type `STT_GNU_IFUNC`. (new symbol type unseen so far)
 
-- We create our own [C program](../playground/ifunc-nolibc.c) using the `ifunc` in the implementation of the `get_msg` function to indicate that the value (ie. the address) of that function will be known at load time after running the `resolve_get_msg` function:
+- We create our own [C program](../playground/ifunc-nolibc.c) using the `ifunc` keyword in the implementation of the `get_msg` function to indicate that the value (ie. the address) of that function will be known at load time after running the `resolve_get_msg` function:
 ```c
 char *get_msg() __attribute__ ((ifunc ("resolve_get_msg")));
 ```
+
+- In real life we would do that rather to pick resolve some implementation dynamically based on runtime variables (Processor capabilities for example, etc.), but writing such a program allows to simulate what happens when linking to `glibc`. Indeed, since `glibc` features several implementations for the same method this symbol type shows up.
 
 - We then try to run it, but prior to that we display how we can extend `gdb` to get more information. Since we use `gdb` against our own linker, `elk`, `gdb` does not read the symbol table of the executable we load through `elk`. Hence we want to extend `gdb` to display details about an address (which file it comes from, location in the file, which section, name of the symbol if matching any).
 
@@ -790,11 +792,13 @@ class MyCommand(gdb.Command):
 
 - PLT stands for Procedure Linkage Table. It is part of the implementation of `ifunc` which allows for dynamic loading of functions. At load time, the loader is supposed to run whatever code is referred by `ifunc` (in the [C program](../playground/ifunc-nolibc.c) that is `resolve_get_msg`) which will return the address of the actual function to call in the future. 
 
-- In practice, the `jmp` to the `function@plt` actually jumps to the GOT (Global Offset Table) which holds the address of the function to call. The GOT table gets populated when calling `function@plt` the first time which falls back to having the loader run the `ifunc` part if `function@plt` points to a GOT table entry that is empty.
+- In practice, the `jmp` to the `function@plt` actually jumps to the GOT (Global Offset Table) which holds the address of the function to call. The GOT table gets populated when calling `function@plt` the first time which falls back to having the loader (`ld`) run the `ifunc` part if `function@plt` points to a GOT table entry that is empty.
+
+- In general for any method that is dynamically loaded, the `jmp` points to the address of `function@plt`. This is necessary even if there is one implementation for `function` (hence no need for `STT_GNU_IFUNC`), because we don't know at build time at which location the library will be mounted. Hence we need a mechanism to resolve those methods dynamically by using a placeholder, `function@plt`, and a table mapping it to the right address, the `GOT` table. Finding the right address could rely on running some code (like in the `STT_GNU_IFUNC` case) or not.
 
 - More on GOT and PLT: https://ir0nstone.gitbook.io/notes/types/stack/aslr/plt_and_got
 
-- We need to apply another relocation type so the address of `function@plt` is not hardcoded in the code but its corresponding virtual address is. Also we instruct in the loader when applying the relocation to first run the function
+- We need to apply another relocation type so the address of `function@plt` is not hardcoded in the code but its corresponding virtual address is. Also we instruct in the loader when applying the relocation to first run the function:
 ```rust
 RT::IRelative => unsafe { objrel.addr().set(obj.base + addend); }
 ```
@@ -808,3 +812,89 @@ into
  ```
 
 - This implies to make the pages RWX when loading everything before adjusting protections.
+
+# Part 10: Safer memory-mapped structures 
+
+- This part is just a refactoring of some code smells in Rust.
+
+- Where possible the use of `std::mem::transmute` to cast to a pointer (an address) is replaced by a regular casts (which is safe - dereferencing the pointer is not though).
+
+- We can use of the `-> !` syntax to indicate that the `jmp` function will never return, making the compiler saving some instructions to prepare a return address. We also can define type aliases locally turning:
+```rust
+unsafe fn jmp(addr: *const u8) {
+    let fn_ptr: fn() = std::mem::transmute(addr);
+    fn_ptr();
+}
+```
+to
+```rust
+unsafe fn jmp(addr: *const u8) -> ! {
+    type EntryPoint = unsafe extern "C" fn() -> !; // the ! indicates no return
+    let entry_point: EntryPoint = std::mem::transmute(addr);
+    entry_point();
+}
+```
+and then there is no need to add code to satisfy the `main` function which calls
+`jmp` after the call to `jmp`, Rust understands that if we reach `jmp` we don't
+care about what is coming after.
+
+- We also rework a piece of code where we want a `struct` to refer to data owned in another `struct` (when loading an object, we want to store all its bytes and we want to include a list of Names which points to those bytes). The trick to make sure Rust compiles is to use `Rc` (reference counters) which will prevent dropping the memory pointed to by the `Rc` is its counter is not null.
+```rust
+struct Object {
+    map: Rc<Vec<u8>>,
+    names: Vec<Name>,
+}
+
+struct Name {
+    map: Rc<Vec<u8>>,    // bytes of the page, same as Object.map
+    range: Range<usize>, // position in the page
+}
+
+impl Name {
+    fn for_object(obj: &Object, range: Range<usize>) -> Self {
+        Self {
+            map: obj.map.clone(), // idiomatic way to write this should be Rc::clone(obj.map), obj.map is a reference to the Rc, because that causes simply the Rc to increment its counter, while usually X.clone() suggests a deep copy
+            range,
+        }
+    }
+
+    fn slice(&self) -> &[u8] {
+        &self.map[self.range.clone()]
+    }
+}
+```
+
+- However `Rc` is not thread safe, so we can use `Arc` instead (Atomic Reference counter).
+
+- We then want to have `Name` reference `Object` itself not `Object.map`. When using `Arc` you need to consider in which function you lock the data, because when returning from these functions the lock is automatically released, which prevents you from returning references to that protected data. This can be mitigated by making such function accept closures:
+```rust
+ fn with_slice<F, T>(&self, mut f: F) -> T
+    where
+        F: FnMut(&[u8]) -> T,
+    {
+        f(&self.object.lock().unwrap().map[self.range.clone()])
+    }
+```
+
+- At some point the author suggests using `RwLock` but he does not use it himself.
+
+- There is a discussion about the use of `Weak` instead of `Rc`, in the final design the `Object` struct is split in 2 structs:
+```rust
+struct Object {
+  // some of the data was split into a new struct
+  data: Arc<ObjectData>,
+  names: Vec<Name>,
+}
+
+// and here's that new struct. It owns the path and the memory contents.
+struct ObjectData {
+  path: PathBuf,
+  map: Vec<u8>,
+}
+
+struct Name {
+    // this doesn't refer to `Object` aymore
+    obj_data: Arc<ObjectData>,
+    range: Range<usize>,
+}
+```
