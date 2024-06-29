@@ -524,7 +524,7 @@ pub struct Rela {
   - parse the relocation table
   - for each relocation entry in the relocation table update the instructions pointed to (applying any modifications necessary if we are mapping instructions at a different address than the virtual address indicated in the program header)
 
-# Part 5: The simplest shared library 
+# Part 5: The simplest shared library
 
 - This part is about how to run executables which depend on shared code which is resolved at load/run time (dynamic libraries): how to locate the dynamic libraries, load libraries and update the executable such that it references the libraries code correctly.
 
@@ -658,7 +658,6 @@ and
   ```
 
 - We update our parsing code to understand more relocation entry (so far we only interpreted the entries of type `Relative`). In particular we notice that when linked to a shared library (ie. library to load dynamically), the `Relative` entry is gone, but we now have 2 entries: one of type `64` and one of type `Copy`, and both of them have their symbol field set to `1` (it was `0` when not dynamically linking).
-
   ```
   # Case with PIE linking but no shared library
   Found 1 relocation entries
@@ -671,6 +670,16 @@ and
   - Rela { offset: 0000100c, relocation_type: Known(_64), symbol: 1, addend: 00000000 }
   - Rela { offset: 00003000, relocation_type: Known(Copy), symbol: 1, addend: 00000000 }
   ```
+
+- NB: You can recover the same information with `readelf --relocs`:
+```
+> readelf --relocs hello-with-extern
+
+Relocation section '.rela.dyn' at offset 0x2b0 contains 2 entries:
+  Offset          Info           Type           Sym. Value    Sym. Name + Addend
+00000000100c  000100000001 R_X86_64_64       0000000000003000 message + 0
+000000003000  000100000005 R_X86_64_COPY     0000000000003000 message + 0
+```
 
 - Also we notice that new dynamic entries are in the dynamic table (pointed to by the program header of type `Dynamic`):
   ```
@@ -762,7 +771,7 @@ let mem_map = std::mem::ManuallyDrop::new(MemoryMap::new(mem_size, &[])?);
 char *get_msg() __attribute__ ((ifunc ("resolve_get_msg")));
 ```
 
-- In real life we would do that rather to pick resolve some implementation dynamically based on runtime variables (Processor capabilities for example, etc.), but writing such a program allows to simulate what happens when linking to `glibc`. Indeed, since `glibc` features several implementations for the same method this symbol type shows up.
+- In real life we would do that rather to pick resolve some implementation dynamically based on runtime variables (Processor capabilities for example, etc.), but writing such a program allows to simulate what happens when linking to `glibc`. Indeed, since `glibc` features several implementations for the same method this symbol type shows up in its implementation.
 
 - We then try to run it, but prior to that we display how we can extend `gdb` to get more information. Since we use `gdb` against our own linker, `elk`, `gdb` does not read the symbol table of the executable we load through `elk`. Hence we want to extend `gdb` to display details about an address (which file it comes from, location in the file, which section, name of the symbol if matching any).
 
@@ -786,21 +795,23 @@ class MyCommand(gdb.Command):
 
 - There is also the builtin `add-symbol-file` gdb command which you can use to indicate to gdb to load more symbols from a particular file at a particular address (the address of the symbol table)
 
-- The approach taken in this part is convoluted, we resolve the PID of the program we are running (the pid of `elk <args>`), print the corresponding memory mapping `cat /proc/<pid>/map` and parse the output. We create subcommands to resolve the relevant information for a particular address from that data structure built from the memory mappings. We then create a python script which defines gdb command around `elk` and load that python script in `.gdbinit` such that we can run these gdb commands automatically.
+- The approach taken in this part is convoluted, we resolve the PID of the program we are running (the pid of `elk <args>`), print the corresponding memory mapping `cat /proc/<pid>/map` and parse the output inside `elk`. We create subcommands in `elk` to resolve the relevant information for a particular address from that data structure built from the memory mappings. We then create a python script which defines gdb command around `elk` and load that python script in `.gdbinit` such that we can run these gdb commands automatically.
 
-- We see that when trying to execute our [C program](../playground/ifunc-nolibc.c) which makes use of `ifunc`, we reach a point when the assembly in `gdb` shows `call <some-address>`. Despite our gdb extensions, no symbol match `<some-address>`. `<some-address>` actually is the result of the mapping of some address in the `.plt` section.
+- NB: we didn't implemented these upgrades in this project, these enhanced capabilities inside gdb are therefore not usable in this project.
 
-- PLT stands for Procedure Linkage Table. It is part of the implementation of `ifunc` which allows for dynamic loading of functions. At load time, the loader is supposed to run whatever code is referred by `ifunc` (in the [C program](../playground/ifunc-nolibc.c) that is `resolve_get_msg`) which will return the address of the actual function to call in the future. 
+- We see that when trying to execute our [C program](../playground/ifunc-nolibc.c) which makes use of `ifunc`, we reach a point when the assembly in `gdb` shows `call <some-address>`. Despite our gdb extensions, no symbol matches `<some-address>`. `<some-address>` actually is the result of the mapping of some address in the `.plt` section.
 
-- In practice, the `jmp` to the `function@plt` actually jumps to the GOT (Global Offset Table) which holds the address of the function to call. The GOT table gets populated when calling `function@plt` the first time which falls back to having the loader (`ld`) run the `ifunc` part if `function@plt` points to a GOT table entry that is empty.
+- PLT stands for Procedure Linkage Table. It is part of the implementation of `ifunc` which allows for dynamic loading of functions. At load time, the loader is supposed to run whatever code is referred by `ifunc` (in the [C program](../playground/ifunc-nolibc.c) that is `resolve_get_msg`) which will return the address of the actual function to call in the future.
 
-- In general for any method that is dynamically loaded, the `jmp` points to the address of `function@plt`. This is necessary even if there is one implementation for `function` (hence no need for `STT_GNU_IFUNC`), because we don't know at build time at which location the library will be mounted. Hence we need a mechanism to resolve those methods dynamically by using a placeholder, `function@plt`, and a table mapping it to the right address, the `GOT` table. Finding the right address could rely on running some code (like in the `STT_GNU_IFUNC` case) or not.
+- In practice, the `jmp` to the `function@plt` actually jumps to the GOT (Global Offset Table) which holds the address of the function to call. The GOT table gets populated when calling `function@plt` for the first time which causes to fall back on the loader (`ld`) running the `ifunc` part if `function@plt` points to a GOT table entry that is empty.
+
+- In general for any method that is dynamically loaded, the `jmp` points to the address of `function@plt`. This is necessary even if there is one implementation for `function` (hence no need for `STT_GNU_IFUNC`), because we don't know at build time at which location the library will be mounted. Hence we need a mechanism to resolve those methods dynamically by using a placeholder, `function@plt`, and a table mapping it to the right address, the `GOT` table. Finding the right address could rely on running some code (like in the `STT_GNU_IFUNC`/`ifunc` case ) or not.
 
 - More on GOT and PLT: https://ir0nstone.gitbook.io/notes/types/stack/aslr/plt_and_got
 
-- We need to apply another relocation type so the address of `function@plt` is not hardcoded in the code but its corresponding virtual address is. Also we instruct in the loader when applying the relocation to first run the function:
+- We need to apply another relocation type so the file address of `function@plt` is not hardcoded in the code but its corresponding virtual address is. Also we instruct in the loader when applying the relocation to first run the function:
 ```rust
-RT::IRelative => unsafe { objrel.addr().set(obj.base + addend); }
+RT::IRelative => unsafe { objrel.addr().set(obj.base + addend); } // applying the relocation, but this will KO because obj.base + added is not the address of `function` (get_msg in the example), but of the ifunc routine (resolve_get_msg in the example) which returns address of `function`
 ```
 into
 ```rust
@@ -811,9 +822,9 @@ into
 },
  ```
 
-- This implies to make the pages RWX when loading everything before adjusting protections.
+- This implies to make the pages RWX when adjusting relocations before adjusting protections.
 
-# Part 10: Safer memory-mapped structures 
+# Part 10: Safer memory-mapped structures
 
 - This part is just a refactoring of some code smells in Rust.
 
@@ -896,5 +907,339 @@ struct Name {
     // this doesn't refer to `Object` aymore
     obj_data: Arc<ObjectData>,
     range: Range<usize>,
+}
+```
+
+# Part 11: More ELF relocations
+
+- So far we have executed [a binary](../playground/hello-with-extern.asm) written in assembly which refered to some external data and we also run a 1 file [C program](../playground/ifunc-nolibc.c) which mimicked the result of linking the code to `glibc` (which contains symbol of type `STT_GNU_IFUNC` through the use of the `ifunc` keyword).
+
+- In this part we try to run C programs which refers to some external [data](../playground/part-11/data-only/chimera.c) and [functions](../playground/part-11/data-and-functions/chimera.c).
+
+- We start by introducing a reference to external data:
+```c
+extern int number;
+```
+
+- We notice that the assembly code generated (and hence the object code) is different whether we use the `-fPIC` (Position Independent Code) option when compiling with `gcc`:
+```asm
+movl    number(%rip), %eax          # number(%rip) means address of number + rip, the assembly generated here is relative %rip
+movl    %eax, %edi
+call    ftl_exit
+```
+vs (PIC version):
+```asm
+movq    number@GOTPCREL(%rip), %rax # number@GOTPCREL specifies the offset to the GOT entry for the symbol number from the current code location, 
+                                    # the addressing is relative to the PC as well here but it points to another location, 
+                                    # the GOT rather than the symbol address directly
+movl    (%rax), %eax
+movl    %eax, %edi
+call    ftl_exit@PLT                # number@PLT specifies the offset to the PLT entry of symbol name from the current code location
+```
+
+- In the PIC version, we notice that we first load the address of `number@GOT` which lives inside the `GOT` (Global Offset Table) and points to the address of `number` in the `.text` segment of the library which contains it. However in the non PIC version, `number` is directly referenced in the `.text` segment of the library which contains it (there is no going through the GOT).
+
+- Running the non PIC version:
+```
+❯ gdb ./chimera-no-pic
+GNU gdb (GDB) 14.1
+(gdb) break _start
+Breakpoint 1 at 0x101c
+(gdb) run
+Starting program: /home/proseau/projects/perso/rust-executable-packer/playground/chimera-no-pic 
+
+Breakpoint 1, 0x000055555555501c in _start ()
+(gdb) x/4i $rip
+=> 0x55555555501c <_start+4>:   mov    eax,DWORD PTR [rip+0x2fde]        # 0x555555558000 <number>
+   0x555555555022 <_start+10>:  mov    edi,eax
+   0x555555555024 <_start+12>:  call   0x555555555000 <ftl_exit>
+   0x555555555029 <_start+17>:  nop
+(gdb) x/1dw 0x555555558000
+0x555555558000 <number>:        42
+(gdb) 
+```
+
+- The loader applies the relocation of type `COPY` which means that at run time the loader copies the value of `number` to location `0x555555554000 + 4000` and the placeholders (`0x0`) pointing to `number` are adjusted with the address `0x555555554000 + 4000`:
+```
+❯ readelf -r chimera-no-pic  
+Relocation section '.rela.dyn' at offset 0x360 contains 1 entry:
+  Offset          Info           Type           Sym. Value    Sym. Name + Addend
+000000004000  000100000005 R_X86_64_COPY     0000000000004000 number + 0
+```
+
+```
+❯ /bin/cat /proc/845605/maps
+555555554000-555555555000 r--p 00000000 fd:01 5113556                    /home/proseau/projects/perso/rust-executable-packer/playground/chimera-no-pic
+555555555000-555555556000 r-xp 00001000 fd:01 5113556                    /home/proseau/projects/perso/rust-executable-packer/playground/chimera-no-pic
+555555556000-555555557000 r--p 00002000 fd:01 5113556                    /home/proseau/projects/perso/rust-executable-packer/playground/chimera-no-pic
+555555557000-555555558000 r--p 00002000 fd:01 5113556                    /home/proseau/projects/perso/rust-executable-packer/playground/chimera-no-pic
+555555558000-555555559000 rw-p 00000000 00:00 0                          [heap]
+7ffff7fc0000-7ffff7fc1000 r--p 00000000 fd:01 5112833                    /home/proseau/projects/perso/rust-executable-packer/playground/libfoonopic.so
+7ffff7fc1000-7ffff7fc2000 r--p 00001000 fd:01 5112833                    /home/proseau/projects/perso/rust-executable-packer/playground/libfoonopic.so
+7ffff7fc2000-7ffff7fc3000 rw-p 00002000 fd:01 5112833                    /home/proseau/projects/perso/rust-executable-packer/playground/libfoonopic.so
+7ffff7fc3000-7ffff7fc5000 rw-p 00000000 00:00 0
+7ffff7fc5000-7ffff7fc9000 r--p 00000000 00:00 0                          [vvar]
+7ffff7fc9000-7ffff7fcb000 r-xp 00000000 00:00 0                          [vdso]
+7ffff7fcb000-7ffff7fcc000 r--p 00000000 fd:01 4456581                    /usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2
+7ffff7fcc000-7ffff7ff1000 r-xp 00001000 fd:01 4456581                    /usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2
+7ffff7ff1000-7ffff7ffb000 r--p 00026000 fd:01 4456581                    /usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2
+7ffff7ffb000-7ffff7fff000 rw-p 00030000 fd:01 4456581                    /usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2
+7ffffffde000-7ffffffff000 rw-p 00000000 00:00 0                          [stack]
+```
+
+- Running the PIC version:
+```
+❯ gdb ./chimera
+GNU gdb (GDB) 14.1
+(gdb) break _start
+Breakpoint 1 at 0x101c
+(gdb) run
+Starting program: /home/proseau/projects/perso/rust-executable-packer/playground/chimera
+Breakpoint 1, 0x000055555555501c in _start ()
+(gdb) x/4i $rip
+=> 0x55555555501c <_start+4>:   mov    rax,QWORD PTR [rip+0x2fbd]        # 0x555555557fe0  # rax <- data stored at the entry number@GOT inside the GOT, 
+                                                                                           # it is an address to the number symbol
+   0x555555555023 <_start+11>:  mov    eax,DWORD PTR [rax]                                 # eax <- data stored address of the number symbol in the .data of libfoo (42)
+   0x555555555025 <_start+13>:  mov    edi,eax                                             # copy the content of number (42) to edi before calling ftl_exit
+   0x555555555027 <_start+15>:  call   0x555555555000 <ftl_exit>
+(gdb) x/1xg 0x555555557fe0                        # checking the content at the location number@GOT
+0x555555557fe0: 0x00007ffff7fc2000                # value is the address of number
+(gdb) x/1dw 0x00007ffff7fc2000                    # checking the content at the address of number
+0x7ffff7fc2000 <number>:        42                # value is 42
+```
+
+- The address of `number` (mapped in the .data section of `libfoo` - notice the RW flag) is inserted in the `GOT` by the linker at build time. At run time the loader applies the relocation (relocation type `GLOB_DAT`) by inserting the address of `number` (mapped somewhere when mapping `libfoo` in memory) in the GOT:
+```
+❯ readelf -r chimera       
+Relocation section '.rela.dyn' at offset 0x358 contains 1 entry:
+  Offset          Info           Type           Sym. Value    Sym. Name + Addend
+000000003fe0  000100000006 R_X86_64_GLOB_DAT 0000000000000000 number + 0
+
+❯ /bin/cat /proc/844298/maps
+555555554000-555555555000 r--p 00000000 fd:01 5112767                    /home/proseau/projects/perso/rust-executable-packer/playground/chimera
+555555555000-555555556000 r-xp 00001000 fd:01 5112767                    /home/proseau/projects/perso/rust-executable-packer/playground/chimera
+555555556000-555555557000 r--p 00002000 fd:01 5112767                    /home/proseau/projects/perso/rust-executable-packer/playground/chimera
+555555557000-555555558000 r--p 00002000 fd:01 5112767                    /home/proseau/projects/perso/rust-executable-packer/playground/chimera
+7ffff7fc0000-7ffff7fc1000 r--p 00000000 fd:01 5112647                    /home/proseau/projects/perso/rust-executable-packer/playground/libfoo.so
+7ffff7fc1000-7ffff7fc2000 r--p 00001000 fd:01 5112647                    /home/proseau/projects/perso/rust-executable-packer/playground/libfoo.so
+7ffff7fc2000-7ffff7fc3000 rw-p 00002000 fd:01 5112647                    /home/proseau/projects/perso/rust-executable-packer/playground/libfoo.so
+7ffff7fc3000-7ffff7fc5000 rw-p 00000000 00:00 0
+7ffff7fc5000-7ffff7fc9000 r--p 00000000 00:00 0                          [vvar]
+7ffff7fc9000-7ffff7fcb000 r-xp 00000000 00:00 0                          [vdso]
+7ffff7fcb000-7ffff7fcc000 r--p 00000000 fd:01 4456581                    /usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2
+7ffff7fcc000-7ffff7ff1000 r-xp 00001000 fd:01 4456581                    /usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2
+7ffff7ff1000-7ffff7ffb000 r--p 00026000 fd:01 4456581                    /usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2
+7ffff7ffb000-7ffff7fff000 rw-p 00030000 fd:01 4456581                    /usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2
+7ffffffde000-7ffffffff000 rw-p 00000000 00:00 0                          [stack]
+```
+
+- We adjust `elk` for this use case, which is straightforward because all we need to do is write the address of the symbol in `./libfoo.so` inside the `GOT`.
+
+- Recall that the purpose of the `GOT` (and the PLT, which we'll get to later) is to avoid having to relocate the executable segment of an executable (in this case the library `libfoo`). Instead the GOT gets updated, so the .text section can be mapped once for any number of instances of that executable.
+
+- We now try to add an `extern` function, `change_number` inside another shared lib, `libbar`, to the code. We hit a different relocation type, `JUMP_SLOT`:
+```
+❯ readelf -r chimera             
+
+Relocation section '.rela.dyn' at offset 0x380 contains 1 entry:
+  Offset          Info           Type           Sym. Value    Sym. Name + Addend
+000000003fe0  000200000006 R_X86_64_GLOB_DAT 0000000000000000 number + 0
+
+Relocation section '.rela.plt' at offset 0x398 contains 1 entry:
+  Offset          Info           Type           Sym. Value    Sym. Name + Addend
+000000004000  000100000007 R_X86_64_JUMP_SLO 0000000000000000 change_number + 0
+```
+
+- Let's see how `change_number` is resolved when running the program to understand how the linux loader `ld` behaves with this relocation `JUMP_SLOT`.
+
+- Inside `gdb`:
+```
+❯ gdb ./chimera
+GNU gdb (GDB) 14.1
+Copyright (C) 2023 Free Software Foundation, Inc.
+License GPLv3+: GNU GPL version 3 or later <http://gnu.org/licenses/gpl.html>
+This is free software: you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law.
+Type "show copying" and "show warranty" for details.
+This GDB was configured as "x86_64-unknown-linux-gnu".
+Type "show configuration" for configuration details.
+For bug reporting instructions, please see:
+<https://www.gnu.org/software/gdb/bugs/>.
+Find the GDB manual and other documentation resources online at:
+    <http://www.gnu.org/software/gdb/documentation/>.
+
+For help, type "help".
+Type "apropos word" to search for commands related to "word"...
+Reading symbols from ./chimera...
+(No debugging symbols found in ./chimera)
+(gdb) break _start
+Breakpoint 1 at 0x103c
+(gdb) run
+Starting program: /home/proseau/projects/perso/rust-executable-packer/playground/part-11/data-and-function/chimera 
+
+Breakpoint 1, 0x000055555555503c in _start ()
+(gdb) # disas is easier to use than x/5i (decode next 5 instructions)
+(gdb) disas
+Dump of assembler code for function _start:
+   0x0000555555555038 <+0>:     push   rbp
+   0x0000555555555039 <+1>:     mov    rbp,rsp
+=> 0x000055555555503c <+4>:     mov    eax,0x0
+   0x0000555555555041 <+9>:     call   0x555555555010 <change_number@plt>
+   0x0000555555555046 <+14>:    mov    rax,QWORD PTR [rip+0x2f93]        # 0x555555557fe0
+   0x000055555555504d <+21>:    mov    eax,DWORD PTR [rax]
+   0x000055555555504f <+23>:    mov    edi,eax
+   0x0000555555555051 <+25>:    call   0x555555555020 <ftl_exit>
+   0x0000555555555056 <+30>:    nop
+   0x0000555555555057 <+31>:    pop    rbp
+   0x0000555555555058 <+32>:    ret
+End of assembler dump.
+(gdb) # we are about to call change_number@plt (not change_number like in the code!), let's see what the instructions there
+(gdb) disas 'change_number@plt'
+Dump of assembler code for function change_number@plt:
+   0x0000555555555010 <+0>:     jmp    QWORD PTR [rip+0x2fea]        # 0x555555558000 <change_number@got.plt>
+   0x0000555555555016 <+6>:     push   0x0
+   0x000055555555501b <+11>:    jmp    0x555555555000
+End of assembler dump.
+(gdb) # we are about to jmp (not call, so we won't return) to the address which is stored at address 0x555555558000. 0x555555558000 is the address of symbol 'change_number@got.plt', what is the content stored at this address?
+(gdb) x/1xg 0x555555558000
+0x555555558000 <change_number@got.plt>: 0x0000555555555016
+(gdb) # 'change_number@got.plt' stores '0x0000555555555016', which is actually the second instruction of 'change_number@plt', so we jump from one instruction of `change_number@plt`  to the next 
+(gdb) # This feels like we just tried to check if change_number@plt was resolved, but it was not so by default it lets us move with the rest of the code
+(gdb) # Let's step instructions after instruction to check we do stay inside 'change_number@plt'
+(gdb) stepi
+0x0000555555555041 in _start ()
+(gdb) disas
+Dump of assembler code for function _start:
+   0x0000555555555038 <+0>:     push   rbp
+   0x0000555555555039 <+1>:     mov    rbp,rsp
+   0x000055555555503c <+4>:     mov    eax,0x0
+=> 0x0000555555555041 <+9>:     call   0x555555555010 <change_number@plt>
+   0x0000555555555046 <+14>:    mov    rax,QWORD PTR [rip+0x2f93]        # 0x555555557fe0
+   0x000055555555504d <+21>:    mov    eax,DWORD PTR [rax]
+   0x000055555555504f <+23>:    mov    edi,eax
+   0x0000555555555051 <+25>:    call   0x555555555020 <ftl_exit>
+   0x0000555555555056 <+30>:    nop
+   0x0000555555555057 <+31>:    pop    rbp
+   0x0000555555555058 <+32>:    ret
+End of assembler dump.
+(gdb) stepi
+0x0000555555555010 in change_number@plt ()
+(gdb) disas
+Dump of assembler code for function change_number@plt:
+=> 0x0000555555555010 <+0>:     jmp    QWORD PTR [rip+0x2fea]        # 0x555555558000 <change_number@got.plt>
+   0x0000555555555016 <+6>:     push   0x0
+   0x000055555555501b <+11>:    jmp    0x555555555000
+End of assembler dump.
+(gdb) stepi
+0x0000555555555016 in change_number@plt ()
+(gdb) disas
+Dump of assembler code for function change_number@plt:
+   0x0000555555555010 <+0>:     jmp    QWORD PTR [rip+0x2fea]        # 0x555555558000 <change_number@got.plt>
+=> 0x0000555555555016 <+6>:     push   0x0
+   0x000055555555501b <+11>:    jmp    0x555555555000
+End of assembler dump.
+(gdb) # we just moved from one instruction to the next, because 'change_number@got.plt' pointed us to that next instruction at address 0x0000555555555016
+(gdb) # we see that we are now going to jump to 0x555555555000 
+(gdb) disas 0x555555555000
+No function contains specified address.
+(gdb) # gdb can't see any symbol there so disas does not work, let's do it manually (NB: using the `elk` part we didn't implemented we can see we are in the `.plt
+` section now)
+(gdb) x/5i 0x555555555000
+   0x555555555000:      push   QWORD PTR [rip+0x2fea]        # 0x555555557ff0
+   0x555555555006:      jmp    QWORD PTR [rip+0x2fec]        # 0x555555557ff8
+   0x55555555500c:      nop    DWORD PTR [rax+0x0]
+   0x555555555010 <change_number@plt>:  jmp    QWORD PTR [rip+0x2fea]        # 0x555555558000 <change_number@got.plt>
+=> 0x555555555016 <change_number@plt+6>:        push   0x0
+(gdb) # we will be pushing something on the stack (NB: elk tells us it is some pointer to the heap), and we see that we then jmp to the address contained in 0x555
+555557ff8, let's see what is in that address
+(gdb) x/1xg 0x555555557ff8
+0x555555557ff8: 0x00007ffff7fdd550
+```
+
+- Checking the mapping in memory:
+```
+❯ /bin/cat /proc/877944/maps
+555555554000-555555555000 r--p 00000000 fd:01 5114546                    /home/proseau/projects/perso/rust-executable-packer/playground/part-11/data-and-function/chimera
+555555555000-555555556000 r-xp 00001000 fd:01 5114546                    /home/proseau/projects/perso/rust-executable-packer/playground/part-11/data-and-function/chimera
+555555556000-555555557000 r--p 00002000 fd:01 5114546                    /home/proseau/projects/perso/rust-executable-packer/playground/part-11/data-and-function/chimera
+555555557000-555555558000 r--p 00002000 fd:01 5114546                    /home/proseau/projects/perso/rust-executable-packer/playground/part-11/data-and-function/chimera
+555555558000-555555559000 rw-p 00003000 fd:01 5114546                    /home/proseau/projects/perso/rust-executable-packer/playground/part-11/data-and-function/chimera
+7ffff7fb9000-7ffff7fbc000 rw-p 00000000 00:00 0
+7ffff7fbc000-7ffff7fbd000 r--p 00000000 fd:01 5114541                    /home/proseau/projects/perso/rust-executable-packer/playground/part-11/data-and-function/libbar.so
+7ffff7fbd000-7ffff7fbe000 r-xp 00001000 fd:01 5114541                    /home/proseau/projects/perso/rust-executable-packer/playground/part-11/data-and-function/libbar.so
+7ffff7fbe000-7ffff7fbf000 r--p 00002000 fd:01 5114541                    /home/proseau/projects/perso/rust-executable-packer/playground/part-11/data-and-function/libbar.so
+7ffff7fbf000-7ffff7fc0000 r--p 00002000 fd:01 5114541                    /home/proseau/projects/perso/rust-executable-packer/playground/part-11/data-and-function/libbar.so
+7ffff7fc0000-7ffff7fc1000 r--p 00000000 fd:01 5114539                    /home/proseau/projects/perso/rust-executable-packer/playground/part-11/data-and-function/libfoo.so
+7ffff7fc1000-7ffff7fc2000 r--p 00001000 fd:01 5114539                    /home/proseau/projects/perso/rust-executable-packer/playground/part-11/data-and-function/libfoo.so
+7ffff7fc2000-7ffff7fc3000 rw-p 00002000 fd:01 5114539                    /home/proseau/projects/perso/rust-executable-packer/playground/part-11/data-and-function/libfoo.so
+7ffff7fc3000-7ffff7fc5000 rw-p 00000000 00:00 0
+7ffff7fc5000-7ffff7fc9000 r--p 00000000 00:00 0                          [vvar]
+7ffff7fc9000-7ffff7fcb000 r-xp 00000000 00:00 0                          [vdso]
+7ffff7fcb000-7ffff7fcc000 r--p 00000000 fd:01 4456581                    /usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2
+7ffff7fcc000-7ffff7ff1000 r-xp 00001000 fd:01 4456581                    /usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2
+7ffff7ff1000-7ffff7ffb000 r--p 00026000 fd:01 4456581                    /usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2
+7ffff7ffb000-7ffff7fff000 rw-p 00030000 fd:01 4456581                    /usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2
+7ffffffde000-7ffffffff000 rw-p 00000000 00:00 0                          [stack]
+```
+
+- We see from that mapping that we just jumped to some code inside the Linux loader `ld-linux`. Our hypothesis is that running the code at location `0x00007ffff7fdd550` in the loader will populate `change_number@got.plt` with the address of `change_number` (for now it holds `0x0000555555555016`). In subsequent calls we will then jump from `change_number@plt` to `change_number` inside the memory mapped of `libbar` (using the reference stored at `change_number@got.plt`)
+
+- However on the first run we:
+  - jump from `change_number@plt` to the next instruction of `change_number@plt` (because this is where `change_number@got.plt`)
+  - jump from `change_number@plt` to the top of the `.plt` section at `0x555555555000` (by the way the `plt` entries like `change_number@plt` are a few bytes below)
+  - jump from the top of the `.plt` to some function in `ld-linux-x86-64.so.2` which will populate the GOT with the right reference to `change_number` inside `libbar` 
+  - jump back from `ld-linux-x86-64` to `change_number` using the entry just populated in `change_number@got.plt`
+  - execute `change_number` (inside libbar) and return to `_start` since the return address still has not been modified
+
+To test this hypothesis we will set a breakpoint at `change_number` and examine the value of `change_number@got.plt` (analyzing the instructions at `0x00007ffff7fdd550` is too complex to be understood so let's just see the effects):
+```
+(gdb) break change_number
+Breakpoint 2 at 0x7ffff7fbd004
+(gdb) x/1xg 0x555555558000
+0x555555558000 <change_number@got.plt>: 0x0000555555555016
+(gdb) continue
+Continuing.
+
+Breakpoint 2, 0x00007ffff7fbd004 in change_number () from /home/proseau/projects/perso/rust-executable-packer/playground/part-11/data-and-function/libbar.so
+(gdb) x/1xg 0x555555558000
+0x555555558000 <change_number@got.plt>: 0x00007ffff7fbd000
+(gdb) # after reaching change_number we see that the GOT was populated with 0x00007ffff7fbd000, let's check instructions at this address, they should be those of 'change_number'
+(gdb) disas 0x00007ffff7fbd000
+Dump of assembler code for function change_number:
+   0x00007ffff7fbd000 <+0>:     push   rbp
+   0x00007ffff7fbd001 <+1>:     mov    rbp,rsp
+=> 0x00007ffff7fbd004 <+4>:     mov    rax,QWORD PTR [rip+0x2fd5]        # 0x7ffff7fbffe0
+   0x00007ffff7fbd00b <+11>:    mov    eax,DWORD PTR [rax]
+   0x00007ffff7fbd00d <+13>:    lea    edx,[rax+rax*1]
+   0x00007ffff7fbd010 <+16>:    mov    rax,QWORD PTR [rip+0x2fc9]        # 0x7ffff7fbffe0
+   0x00007ffff7fbd017 <+23>:    mov    DWORD PTR [rax],edx
+   0x00007ffff7fbd019 <+25>:    nop
+   0x00007ffff7fbd01a <+26>:    pop    rbp
+   0x00007ffff7fbd01b <+27>:    ret
+End of assembler dump.
+```
+
+- NB: It is hard to find the code/symbol that corresponds to where we jumped inside `ld-linux-x86-64.so.2` because the dynamic loader is stripped (to save up size of the executable). Until 2019, ELF files debug information was either baked inside or stripped off. Since 2019, this debug information can be exported to some other file and loaded on demand. If you find such a debug file (should be named `ld-X.XX.so.debug`) on your machine, then you could find out the name of the method called inside `ld-linux-x86-64.so.2` to populate the GOT with the right reference:
+```
+# grepping on the last bit since the address in the debug file corresponds to the file address and not the virtual addres
+> nm /usr/lib/debug/usr/lib/ld-2.32.so.debug | grep d550 
+000000000001d550 t _dl_runtime_resolve_xsavec
+```
+Unfortunately I could not find such a debug file for the `ld` dynamic loader on my machine (the above terminal output is copy pasted and adapted from the article)
+
+- NB: the function `_dl_runtime_resolve_xsavec` does not use regular registers to not override the values the arguments and return address of the function it will end up calling, `change_number` in our example, such that this function can return back to the main execution after the call to `change_number@plt`.
+
+- We conclude the article by verifying that:
+  - `_dl_runtime_resolve_xsavec` is called only the first time: we add 3 consecutive calls to `change_number` in the C code and set a breakpoint at the begining of `.plt` with `break *0x555555555000`, we then run the program and enter `continue`, we see that we hit the breakpoint only once and not three times
+  - running the binary fails if libbar does not contain a `change_number` function: we rename the content of `change_number` inside `libbar` which we recompile and we see that running `chimera` (with the right runpath and `-l` option allowing to locate `libbar`) fails with: "undefined symbol: change_number"
+  - we can force the populating of the `GOT` at load time before jumping to `_start` with `LD_BIND_NOW=1 ./chimera`: we run `LD_BIND_NOW=1 gdb ./chimera` and we set a breakpoint at the begining of `.plt` with `break *0x555555555000` (like earlier), the breakpoint is never hit (meaning we never had to jump to `_dl_runtime_resolve_xsavec`, the GOT table was already populated)
+
+- In the `elk` code, instead of inserting code to locate dynamically the symbol and update the GOT accordingly, we statically resolve all the references prior to jumping to `_start` and update the GOT with the right entry, just like we did for `GLOB_DAT` (basically we implement the behaviour of `ld` with `LD_BIND_NOW=1`):
+```rust
+match reltype {
+    // omitted: other arms
+    RT::GlobDat | RT::JumpSlot => unsafe {
+        objrel.addr().set(found.value());
+    },
 }
 ```

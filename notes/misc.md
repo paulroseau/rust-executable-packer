@@ -58,6 +58,8 @@ int main() {
 
 - When you run `strip <elf-file>` it removes what is not necessary at runtime, that is the `.symtab` (which is informational), but it preserves the `.dynsym`. After you `strip`ed an ELF file, `nm` shows no symbols.
 
+- However `nm -D` reads the dynamic symbols.
+
 - It is better to use `readelf` with the `-W` (wide) option.
 
 - Example:
