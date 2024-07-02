@@ -2,13 +2,13 @@
 
 - We write a simple [assembly program](../playground/hello.asm) using `nasm` and make an executable out of it. This program calls the `write` system call and the `exit` system call.
 
-- `xxd` performs and hex dump of a file
+- `xxd` performs an hex dump of a file.
 
 - On Linux executables are ELF files. ELF is a binary format. There is a detail of the format of the header of an ELF file.
 
 - We start writing a parser in Rust using:
   - the `nom` parsing library
-  - `derive_try_from_primitive` library which provides a macro to get an enum value from a primitive type (adds a `try_from` constructor with a macro) when the enum is encoded with primitive type
+  - the `derive_try_from_primitive` library which provides a macro to get an enum value from a primitive type (adds a `try_from` constructor with a macro) when the enum is encoded with primitive type
   - `derive_more` library which provides a macro to derive the `Add` and `Sub` trait automatically on some types (the Address type in particular)
 
 - Using `gdb` (`ugdb` is a nicer TUI tool over `gdb`) we can set `breakpoints` in an executable for it to stop at particular lines or set `catchpoints` to catch system calls. Note that `gdb` can show the executable in the AT&T assembly syntax (default) or the Intel assembly syntax.
@@ -25,7 +25,9 @@
 
 - We modify our parsing program to also run the program afterwards.
 
-- We use `ndisasm` (n disasembler) to disassemble our [hello executable](../playground/hello.asm) which takes us back to roughly the original `hello.asm` code. NB: You need to tell `ndisasm` to interpret instructions over 64 bits (`-b 64`), and to skip (`k 0,$((0x1000))`) to the address after the header and irrelevant sections of the ELF file before interpreting the bytes as assembly code (in the case of our executable, we skip to the address `0x1000` - we just poke around to find that address by looking at the content)
+- We use `ndisasm` (n disasembler) to disassemble our [hello executable](../playground/hello.asm) which takes us back to roughly the original `hello.asm` code.
+
+- NB: You need to tell `ndisasm` to interpret instructions over 64 bits (`-b 64`), and to skip (`-k 0,$((0x1000))`) to the address after the header and irrelevant sections of the ELF file before interpreting the bytes as assembly code (in the case of our executable, we skip to the address `0x1000` - we just poke around to find that address by looking at the content)
 
 - We modify our parsing program to also run the `ndisasm` command to print the assembly content (the first `0x25 = 37` bytes from the address `0x1000`) of the ELF file after parsing and running it.
 
@@ -66,7 +68,7 @@ for progam_header_slice in progam_header_slices.take(progam_header_count) {
 
 - We modify our parsing application to:
   1. print the program headers (along with their segment flag - Read, Write, Execute)
-  2. identify the bytes to start disasembling from with `ndasm` by finding the section containing the entrypoint through the `ProgramHeader` methods and constructor
+  2. identify the bytes to start disassembling from with `ndasm` by finding the section containing the entrypoint through the `ProgramHeader` methods and constructor
 
 - We want to use the same approach as with `entry_point.c` to modify the protection (RWX) of the pages, to make our life simpler we don't use rust's `libc` - which would be the equivalent of what did earlier - but instead the `region` crate (which uses `libc` under the hood)
 
@@ -200,7 +202,7 @@ At this point we understand that `exec`:
 
 - NB: `ugdb` prints the result of `rip + 0xABC` in the comments, we can find the same result by replacing `rip` by the value of the next instruction (`rip` is the program counter, when the instruction executes its value is already incremented, intel makes use of pipelining...)
 
-- We inspect [our C compiled program](../playground/entry_point) with `objdump --disasembler-option intel --disassemble-all` (or `objdump -M intel -D`) and we look for that line of code with `0x2eff`, and it shows in the comment what this address corresponds to a call to `__libc_start_main` (which we didn't define):
+- We inspect [our C compiled program](../playground/entry_point) with `objdump --disasembler-option intel --disassemble-all` (or `objdump -M intel -D`) and we look for that line of code with `0x2eff`, and it shows in the comment that this address corresponds to a call to `__libc_start_main` (which we didn't define):
 ```
 10af:   45 31 c0                xor    r8d,r8d
 10b2:   31 c9                   xor    ecx,ecx
@@ -326,7 +328,7 @@ Disassembly of section .data:
 ❯ objdump -M intel -D hello-pie | grep -A 5 -B 5 syscall
     1000:       b8 01 00 00 00          mov    eax,0x1
     1005:       bf 01 00 00 00          mov    edi,0x1
-    100a:       48 be 00 30 00 00 00    movabs rsi,0x3000 <- this has changed but still marked as moveabs
+    100a:       48 be 00 30 00 00 00    movabs rsi,0x3000 <- this has changed but still uses the moveabs instruction
     1011:       00 00 00
     1014:       ba 0d 00 00 00          mov    edx,0xd
     1019:       0f 05                   syscall
@@ -381,7 +383,7 @@ Hello World
 
 - At this point we understand that:
   - an ELF file points to an interpreter (a linker typically `ld`) which needs to be present on the host, you can see it with `file <elf-file>`
-  - you can instruct `ld` to generate a Position Independent Executable with the option `ld -pie` such that the executable output can be loaded anywhere in memory and work (this commonly used for shared libraries which need to be mapped when running an arbitrary executable (we don't know what address span will be available)
+  - you can instruct `ld` to generate a Position Independent Executable with the option `ld -pie` such that the executable output can be loaded anywhere in memory and work (this is commonly used for shared libraries which need to be mapped when running an arbitrary executable (we don't know what address span will be available)
   - some assembly instructions will break a PIE code, in our case we had to replace a `mov` by a `lea`
 
 # Part 4: ELF relocations
@@ -506,7 +508,7 @@ pub struct Rela {
 ```
   This array is called the "Relocation table" (the above struct is also known as `Elf64_Rela` entry). We know how many bytes to consider for parsing the reloction table (array of `Rela`s or relocation_entry) with the information contained in the `RelaSz` dynamic entry (gives the amount of bytes to consider) and the `RelaCount` dynamic entry.
 
-- To summarise, the dynamic program header points to a list of dynamic entries, of which the `Rela` dynamic entry points to the start of the relocation table.
+- To summarize, the dynamic program header points to a list of dynamic entries, of which the `Rela` dynamic entry points to the start of the relocation table.
 
 - Note that there are different `relocation_type` for different processor, because they each have different instructions (in machine language), the instructions need to be patched differently.
 
@@ -737,41 +739,41 @@ SectionHeader { name: 00000009, section_type: 3, flags: 0, address: 00000000, of
 SectionHeader { name: 00000011, section_type: 3, flags: 0, address: 00000000, offset: 00003118, size: 00000065, link: 0, info: 0, align: 00000001, entry_size: 00000000 }
 ```
 
-- After finding the section header which holds all the information (address, size, number of entry) about the symbol table we can parse all the symbols. In this case we have 2 symbols (`echo "$((0x30)) / $((0x18))"`
+- After finding the section header which holds all the information (address, size, number of entry) about the symbol table we can parse all the symbols. In this case we have 2 symbols: `echo "$((0x30)) / $((0x18))"`
 
 # Part 6: Loading multiple ELF objects
 
-- An ELF file can be either an executable or a library. When loading an executable, the loader needs to look at the `NEEDED` dynamic entry as well as the `RUNPATH` dynamic entry to locate all the necessary libraries. These need to be loaded in a BFS order
+- An ELF file can be either an executable or a library. When loading an executable, the loader needs to look at the `NEEDED` dynamic entry as well as the `RUNPATH` dynamic entry to locate all the necessary libraries. These need to be loaded in a BFS order.
 
 # Part 7: Dynamic symbol resolution
 
-- Running an executable requires to load various files (the executable file and its dynamic libraries). For each of these files you need to load several segments (pointed to by Program Headers of type `Load`). We need to compute a virtual address range necessary for all segments of each file, such that we can load each file in a distinct address space (ie. from a different base address). We need to take care to segments that are not page aligned, and add the corresponding padding. Once those ranges are determined, we can map the content of each segment of each file to the memory ranges computed. (Contrarily to what we have done previously, we don't copy the bytes from the file, we map them directly using `MemoryMap` which accepts `MapOption::MapFd` file descriptor).
+- Running an executable requires to load various files (the executable file and its dynamic libraries). For each of these files you need to load several segments (pointed to by Program Headers of type `Load`). We need to compute a virtual address range necessary for all segments of each file, such that we can load each file in a distinct address space (ie. from a different base address). We need to be careful to segments that are not page aligned, and add the corresponding padding. Once those ranges are determined, we can map the content of each segment of each file to the memory ranges computed. (Contrarily to what we have done previously, we map the file bytes directly using `MemoryMap` which accepts `MapOption::MapFd` file descriptor while initially we read those in memory and copied those bytes from the heap to the page we mapped for that).
 
 - A trick is that when the object `MemoryMap` goes out of scope the `drop` method actually calls `unmap`. To prevent that we instantiate `MemoryMap` with:
 ```rust
 let mem_map = std::mem::ManuallyDrop::new(MemoryMap::new(mem_size, &[])?);
 ```
 
-- We then need to apply relocations on all files (libraries) in reverse order to how we loaded them.
+- We then need to apply relocations on all files (libraries) in the reverse order of the one we used to load them (opposite to the BFS order where the root is the executable to run).
 
 # Part 8: Dynamic linker speed and correctness
 
 - This is a refactoring part.
 
-- The only thing we changed is to take into account executables with a `.bss` section which holds uninitialized data that contribute to the program's memory image. By definition, the system initializes the data with zeros when the program begins to run. The section occupies no file space. We need to make sure we zero out the bits beyond the file size (up to the end of the memory range to which the section is mapped).
+- The only thing we changed is to take into account executables with a `.bss` section which holds uninitialized data that contribute to the program's memory image size. By definition, the system initializes the data with zeros when the program begins to run. The section occupies no file space. We need to make sure we zero out the bits beyond the file size (up to the end of the memory range to which the section is mapped).
 
 # Part 9: GDB scripting and Indirect functions
 
 - Our linker can load C applications that don't rely on `glibc`. We can test that by inlining assembly code (which end up calling `syscall`) inside C code and by compiling through `gcc` with the option `-nodefaultlibs`.
 
-- `glibc` actually has several implementation of C functions depending on the hardware used. To resolve the right implementation when loading the code we need to run some subroutine. To indicate that a Symbol (such as a C function of which implementation depends on the hardware) needs to be resovled through some execution, that symbol is marked of type `STT_GNU_IFUNC`. (new symbol type unseen so far)
+- `glibc` actually has several implementation of C functions depending on the hardware used. To resolve the right implementation when loading the code we need to run some subroutine. To indicate that a Symbol (such as a C function of which implementation depends on the hardware) needs to be resovled through some execution, that symbol is marked of type `STT_GNU_IFUNC` (new symbol type unseen so far).
 
 - We create our own [C program](../playground/ifunc-nolibc.c) using the `ifunc` keyword in the implementation of the `get_msg` function to indicate that the value (ie. the address) of that function will be known at load time after running the `resolve_get_msg` function:
 ```c
 char *get_msg() __attribute__ ((ifunc ("resolve_get_msg")));
 ```
 
-- In real life we would do that rather to pick resolve some implementation dynamically based on runtime variables (Processor capabilities for example, etc.), but writing such a program allows to simulate what happens when linking to `glibc`. Indeed, since `glibc` features several implementations for the same method this symbol type shows up in its implementation.
+- In real life we would do that rather to pick some implementation dynamically based on runtime variables (Processor capabilities for example, etc.), but writing such a program allows to simulate what happens when linking to `glibc`. Indeed, since `glibc` features several implementations for the same method this symbol type shows up in the `glibc` code.
 
 - We then try to run it, but prior to that we display how we can extend `gdb` to get more information. Since we use `gdb` against our own linker, `elk`, `gdb` does not read the symbol table of the executable we load through `elk`. Hence we want to extend `gdb` to display details about an address (which file it comes from, location in the file, which section, name of the symbol if matching any).
 
@@ -797,15 +799,15 @@ class MyCommand(gdb.Command):
 
 - The approach taken in this part is convoluted, we resolve the PID of the program we are running (the pid of `elk <args>`), print the corresponding memory mapping `cat /proc/<pid>/map` and parse the output inside `elk`. We create subcommands in `elk` to resolve the relevant information for a particular address from that data structure built from the memory mappings. We then create a python script which defines gdb command around `elk` and load that python script in `.gdbinit` such that we can run these gdb commands automatically.
 
-- NB: we didn't implemented these upgrades in this project, these enhanced capabilities inside gdb are therefore not usable in this project.
+- NB: we didn't implement these upgrades in this project, these enhanced capabilities inside gdb are therefore not usable in this project.
 
 - We see that when trying to execute our [C program](../playground/ifunc-nolibc.c) which makes use of `ifunc`, we reach a point when the assembly in `gdb` shows `call <some-address>`. Despite our gdb extensions, no symbol matches `<some-address>`. `<some-address>` actually is the result of the mapping of some address in the `.plt` section.
 
-- PLT stands for Procedure Linkage Table. It is part of the implementation of `ifunc` which allows for dynamic loading of functions. At load time, the loader is supposed to run whatever code is referred by `ifunc` (in the [C program](../playground/ifunc-nolibc.c) that is `resolve_get_msg`) which will return the address of the actual function to call in the future.
+- PLT stands for Procedure Linkage Table. `function@plt` maps to a code in the PLT which checks if there is an entry for `function` in the `GOT` (Global Offset Table). If there is, it jumps there if not, it will jump to some code in the dynamic loader `ld` (the interpreter marked in the ELF file header, which typically is `ld` is also loaded in memory) which will resolve the symbol and populate the `GOT`.
 
-- In practice, the `jmp` to the `function@plt` actually jumps to the GOT (Global Offset Table) which holds the address of the function to call. The GOT table gets populated when calling `function@plt` for the first time which causes to fall back on the loader (`ld`) running the `ifunc` part if `function@plt` points to a GOT table entry that is empty.
+- This mechanism allows to implement `ifunc`. For symbols of type `STT_GNU_IFUNC` the loader is supposed to run whatever code is referred by `ifunc` (in the [C program](../playground/ifunc-nolibc.c) that is `resolve_get_msg`) which will return the address of the actual function to call in the future, and the loader updates the `GOT` with that returned address.
 
-- In general for any method that is dynamically loaded, the `jmp` points to the address of `function@plt`. This is necessary even if there is one implementation for `function` (hence no need for `STT_GNU_IFUNC`), because we don't know at build time at which location the library will be mounted. Hence we need a mechanism to resolve those methods dynamically by using a placeholder, `function@plt`, and a table mapping it to the right address, the `GOT` table. Finding the right address could rely on running some code (like in the `STT_GNU_IFUNC`/`ifunc` case ) or not.
+- In general for any method that is dynamically loaded, the `jmp` points to the address of `function@plt`. This is necessary even if there is only one implementation for `function` (ie. symbols not marked with `STT_GNU_IFUNC`), because we don't know at build time at which location the libraries will be mounted. Hence we need a mechanism to resolve those methods dynamically by using a placeholder, `function@plt`, and a table which maps it to the right address, the `GOT` table. Finding the right address could rely on running some code (like in the `STT_GNU_IFUNC`/`ifunc` case ) or not.
 
 - More on GOT and PLT: https://ir0nstone.gitbook.io/notes/types/stack/aslr/plt_and_got
 
@@ -818,17 +820,17 @@ into
  RT::IRelative => unsafe {
     // new! and *very* unsafe!
     let selector: extern "C" fn() -> delf::Addr = std::mem::transmute(obj.base + addend);
-    objrel.addr().set(selector()); // runs the ifunc routine to resolve the right address to write in the GOT table and to apply in relocation!
+    objrel.addr().set(selector()); // runs the ifunc routine which returns the right address to apply in relocations (with ld this it will end up in the GOT table)
 },
  ```
 
-- This implies to make the pages RWX when adjusting relocations before adjusting protections.
+- This implies to make the pages RWX when applying relocations (because it could contain some code to be executed, like the one behind `ifunc`) before adjusting protections.
 
 # Part 10: Safer memory-mapped structures
 
 - This part is just a refactoring of some code smells in Rust.
 
-- Where possible the use of `std::mem::transmute` to cast to a pointer (an address) is replaced by a regular casts (which is safe - dereferencing the pointer is not though).
+- Where possible the use of `std::mem::transmute` to cast to a pointer (an address) is replaced by regular casts to pointers (which is safe - dereferencing the pointer is not though).
 
 - We can use of the `-> !` syntax to indicate that the `jmp` function will never return, making the compiler saving some instructions to prepare a return address. We also can define type aliases locally turning:
 ```rust
@@ -845,11 +847,9 @@ unsafe fn jmp(addr: *const u8) -> ! {
     entry_point();
 }
 ```
-and then there is no need to add code to satisfy the `main` function which calls
-`jmp` after the call to `jmp`, Rust understands that if we reach `jmp` we don't
-care about what is coming after.
+and then there is no need to add code to satisfy the `main` function which calls `jmp` after the call to `jmp`, Rust understands that if we reach `jmp` we don't care about what is coming after.
 
-- We also rework a piece of code where we want a `struct` to refer to data owned in another `struct` (when loading an object, we want to store all its bytes and we want to include a list of Names which points to those bytes). The trick to make sure Rust compiles is to use `Rc` (reference counters) which will prevent dropping the memory pointed to by the `Rc` is its counter is not null.
+- We also rework a piece of code where we want a `struct` to refer to data owned in another `struct` (when loading an object, we want to store all its bytes and we want to include a list of Names which points to those bytes). The trick to make sure Rust compiles is to use `Rc` (reference counters) which will prevent dropping the memory pointed to by the `Rc` if its counter is non zero.
 ```rust
 struct Object {
     map: Rc<Vec<u8>>,
@@ -864,7 +864,7 @@ struct Name {
 impl Name {
     fn for_object(obj: &Object, range: Range<usize>) -> Self {
         Self {
-            map: obj.map.clone(), // idiomatic way to write this should be Rc::clone(obj.map), obj.map is a reference to the Rc, because that causes simply the Rc to increment its counter, while usually X.clone() suggests a deep copy
+            map: obj.map.clone(), // idiomatic way to write this should be Rc::clone(obj.map), because that simply causes the Rc to increment its counter, while usually X.clone() suggests a deep copy (note that obj.map is a reference to the Rc, not the Rc itself, which is the type Rc::clone takes as argument) 
             range,
         }
     }
@@ -1056,21 +1056,6 @@ Relocation section '.rela.plt' at offset 0x398 contains 1 entry:
 ```
 ❯ gdb ./chimera
 GNU gdb (GDB) 14.1
-Copyright (C) 2023 Free Software Foundation, Inc.
-License GPLv3+: GNU GPL version 3 or later <http://gnu.org/licenses/gpl.html>
-This is free software: you are free to change and redistribute it.
-There is NO WARRANTY, to the extent permitted by law.
-Type "show copying" and "show warranty" for details.
-This GDB was configured as "x86_64-unknown-linux-gnu".
-Type "show configuration" for configuration details.
-For bug reporting instructions, please see:
-<https://www.gnu.org/software/gdb/bugs/>.
-Find the GDB manual and other documentation resources online at:
-    <http://www.gnu.org/software/gdb/documentation/>.
-
-For help, type "help".
-Type "apropos word" to search for commands related to "word"...
-Reading symbols from ./chimera...
 (No debugging symbols found in ./chimera)
 (gdb) break _start
 Breakpoint 1 at 0x103c
@@ -1150,7 +1135,7 @@ No function contains specified address.
    0x55555555500c:      nop    DWORD PTR [rax+0x0]
    0x555555555010 <change_number@plt>:  jmp    QWORD PTR [rip+0x2fea]        # 0x555555558000 <change_number@got.plt>
 => 0x555555555016 <change_number@plt+6>:        push   0x0
-(gdb) # we will be pushing something on the stack (NB: elk tells us it is some pointer to the heap), and we see that we then jmp to the address contained in 0x555
+(gdb) # we will be pushing something on the stack (NB: elk debugging functions tell us it is some pointer to the heap), and we see that we then jmp to the address contained in 0x555
 555557ff8, let's see what is in that address
 (gdb) x/1xg 0x555555557ff8
 0x555555557ff8: 0x00007ffff7fdd550
@@ -1189,7 +1174,7 @@ No function contains specified address.
   - jump from `change_number@plt` to the top of the `.plt` section at `0x555555555000` (by the way the `plt` entries like `change_number@plt` are a few bytes below)
   - jump from the top of the `.plt` to some function in `ld-linux-x86-64.so.2` which will populate the GOT with the right reference to `change_number` inside `libbar` 
   - jump back from `ld-linux-x86-64` to `change_number` using the entry just populated in `change_number@got.plt`
-  - execute `change_number` (inside libbar) and return to `_start` since the return address still has not been modified
+  - execute `change_number` (inside libbar) and return to the instructions in `_start` since the return address still has not been modified
 
 To test this hypothesis we will set a breakpoint at `change_number` and examine the value of `change_number@got.plt` (analyzing the instructions at `0x00007ffff7fdd550` is too complex to be understood so let's just see the effects):
 ```
@@ -1243,3 +1228,232 @@ match reltype {
     },
 }
 ```
+
+# Part 12: A no_std Rust binary
+
+- We want to understand how the arguments and environment variables are passed to the loader and how they are passed to the entrypoint of an ELF file. If you look in any standard executable, you will see the `_start` function does a few stack manipulations (it updates the `rsp` register) and then calls `__libc_start_main@GLIBC_2.2.5`. Using our `elk` binary as an example:
+```
+❯ objdump -M intel --disassemble=_start ./target/debug/elk
+./target/debug/elk:     file format elf64-x86-64
+Disassembly of section .init:
+Disassembly of section .plt:
+Disassembly of section .plt.got:
+Disassembly of section .text:
+000000000000eb00 <_start>:
+    eb00:       31 ed                   xor    ebp,ebp
+    eb02:       49 89 d1                mov    r9,rdx
+    eb05:       5e                      pop    rsi
+    eb06:       48 89 e2                mov    rdx,rsp
+    eb09:       48 83 e4 f0             and    rsp,0xfffffffffffffff0
+    eb0d:       50                      push   rax
+    eb0e:       54                      push   rsp
+    eb0f:       45 31 c0                xor    r8d,r8d
+    eb12:       31 c9                   xor    ecx,ecx
+    eb14:       48 8d 3d 95 d3 00 00    lea    rdi,[rip+0xd395]         # 1beb0 <main>
+    eb1b:       ff 15 3f 83 0b 00       call   QWORD PTR [rip+0xb833f]  # c6e60 <__libc_start_main@GLIBC_2.34>
+    eb21:       f4                      hlt
+```
+
+- So before `ld` makes the CPU jump to `_start`, the memory is already prepared on the stack with all the information `main` will need. For example, `argc` is already on the stack and moved to the `rsi` register with `pop rsi`, then `rsp` is moved to `rdx` such that `rdx` points to `argv`, etc. Eventually we call `__libc_start_main` which will find its arguments in the registers that the C convention expects to find them on. By the way the signature of `__libc_start_main` is (don't know why `init`, `fini` and `rtld_fini` are not passed like in the example):
+```c
+int __libc_start_main(
+    int (*main)(int, char**, char**),
+    int argc,
+    char** ubp_av,
+    void (*init)(void),
+    void (*fini)(void),
+    void (*rtld_fini)(void),
+    void(*stack_end)
+);
+```
+
+- The article shows a [diagram](./stack-layout.png) illustrating how the Stack should be structured by `ld` before `jmp` to `_start`.
+
+- We want to build a Rust program which prints its arguments without using `libc` at all. Basically we want the resulting executable to be made of one object which does not link to anything, not even `ld` (statically linked). We will use the Rust `libcore` which is a subset of the Rust `libstd` which does not depend on `libc` (`libstd` encompasses `libcore` and depends on `libc`). `libcore` provides the core language features (slices, etc.). However it expects a few symbols to be defined. This is why we need to define a `panic_handler`, and an `eh_personality` (more details in `./misc.md`)
+
+- We also use the `no_mangle` and `naked` annotations which respectively allow to preserve the name of the symbol of the `_start` method (`no_mangle`), and to write a function exclusively in assembly using the `asm!` macro (ie. preventing rustc to add prologue such as setting return address etc.). When using `naked` you should wrap the function (`_start`) with `extern "C"` to avoid a warning which will tell you that the RustC ABI is not supported by naked functions.
+
+- We use `asm!` to implement calls to syscalls without `libc`, we also need to implement the `strlen` method which `libcore` expects to find implemented.
+
+- We manage to build a binary that prints arguments in debug mode but which fails in release mode. This is because initially we forgot to specify in our `asm` inline code which registers are used implicitly (syscalls don't preserve certain registers, they return their value in `rax`, etc.). If we don't do that, LLVM tries to use as much registers as possible to avoid writing and reading values from memory (on the stack), and ends up corrupting the values held in those registers after the syscall returns.
+```rust
+    asm!(
+        "syscall",
+        in("rax") syscall_number,
+        in("rdi") fd,
+        in("rsi") buffer,
+        in("rdx") count,
+        options(nostack)
+    );
+```
+needs to become:
+```rust
+    asm!(
+        "syscall",
+        inout("rax") syscall_number => _, // <- change here
+        in("rdi") fd,
+        in("rsi") buffer,
+        in("rdx") count,
+        lateout("rcx") _, // <- is not preserved across the syscall
+        lateout("r11") _, // <- is not preserved across the syscall
+        options(nostack)
+    );
+```
+
+- The resulting binary is completely self-contained, it does not link to anything not even the dynamic loader `ld`:
+```
+❯ ldd ./target/debug/echidna             
+        statically linked
+```
+VS (regular rust executable)
+```
+❯ ldd elk/target/debug/elk
+        linux-vdso.so.1 (0x00007fffbd9bd000)
+        libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007f1f1da1a000)
+        /lib64/ld-linux-x86-64.so.2 (0x00007f1f1dcd1000)
+        libgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x00007f1f1d9ed000)
+```
+
+- When running `echidna` we can see that its stack is not by the dynamic loader `ld` (since it does not refer to it). The setting up of the stack is done by the Kernel following the call to the `execve` syscall. So our `elk` is doing more than `ld` it does both what `execve` and `ld` does. For instance the creation of the memory mapping is done by `execve` (check `man execve` for details). On Linux, `execve` creates the process data structure, the `pid`, sets up the memory mapping and based on the format of the executable (which most often is `ELF`) resolves a dynamic loader - typically `ld.so` - (or not if it is statically linked) and jumps to the entrypoint of that loader (or directly to the entrypoint of the executable if it is statically linked).
+
+- We simplify the code by:
+  1. implementing the `From` trait for the `PrintArg` enum (we do it for `usize`, u8 slices and fixed size arrays of `u8` - necessary for hardcoded strings)
+  2. writing macros to generate the `print(&[x.into(), y.into(), ...])` code
+
+- We also want to use the `slice::starts_with` method (defined in `libcore`) but it relies on the `memcpy` function. In a regular rust application (depending on `libstd`) this is provided by the `libc` crate (which defines a lot of `extern` and links to the system `libc` library - `glibc` on Linux for instance) because `libstd` depends on the `libc` crate. However here we only depend on `libcore` so we can either: 
+  - implement our own `memcpy` (or our own `starts_with` since that's all we will use in this case)
+  - or ask the compiler to generate it by using the `compiler_builtins` crate which includes a series low level functions implemented through `asm`
+
+- NB: the `compiler_builtins` crate is precisely a crate where `intrinsics` (operations that are built-in the compiler) are ported such that you can compile some rust code against a target that `rustc` does not support yet. It boils down to making `rustc` smaller. When trying to compile without:
+```toml
+[dependencies]
+compiler_builtins = { version = "0.1.113", features = ["mem"] }
+```
+we get the following error:
+```
+error: linking with `cc` failed: exit status: 1
+  |
+  = note: LC_ALL="C" PATH="/home/proseau/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/x86_64-unknown-linux-gnu/bin:/home/proseau/.rustup/toolch
+= note: rust-lld: error: undefined symbol: memcmp
+      >>> referenced by cmp.rs:92 (/rustc/aa1d4f6826de006b02fed31a718ce4f674203721/library/core/src/slice/cmp.rs:92)
+      >>>               /home/proseau/projects/perso/rust-executable-packer/echidna/target/debug/deps/echidna-ae6b012009aef92b.4cbfa6toa57ergtvwoz8vjzuv.rcgu.
+o:(_$LT$$u5b$A$u5d$$u20$as$u20$core..slice..cmp..SlicePartialEq$LT$B$GT$$GT$::equal::h66c8d255f5ae7df4)
+      collect2: error: ld returned 1 exit status
+```
+However when including it, compiling of the `compiler_builtins` fails - I could not troubleshoot why (I commented the code that makes its use necessary).
+
+- NB: auxiliary vectors are used to make some kernel information available to the running process in user space (for instance: `AT_SYSINFO` provides the address of where we jump to execute a syscall - it is not present/needed on all architectures, for example it is absent on x86-64, `AT_BASE` provides the base address of the program interpreter). Those are placed in the stack right after the environment variables by the kernel prior to jumping to the entry point of the program. Actually, most of the time the kernel prepares the memory layout and maps amongst other things `ld` which will load all the dynamic libraries. `ld` is the main piece of code which reads the data in auxiliary vectors because `ld` needs some kernel information. Auxiliary vectors are a way to avoid resorting to several syscalls to obtain information it very often needs.
+
+- More details on auxiliary vectors: https://lwn.net/Articles/519085/
+
+- NB: `libc` provides the `getauxval` function to reteive those values from the bottom of the stack. The man page of `getauxval` says:
+    ```
+    The primary consumer of the information in the auxiliary vector is the
+    dynamic linker, ld-linux.so(8). The auxiliary vector is a convenient and
+    efficient  shortcut  that allows  the kernel to communicate a certain set
+    of standard information that the dynamic linker usually or always needs.
+    In some cases, the same information could be obtained by system calls, but
+    using the auxiliary vector is cheaper.
+
+    The auxiliary vector resides just above the argument list and environment in
+    the process address space.
+    ```
+
+- We complete `echidna` by adding code that can print the environment variables and the auxiliary vectors on top of the arguments. We do so by keeping walking the memory starting from the top of the stack (we skip over all the `argv` values and keep going to read environment variables and auxiliary vectors). The argument to `main` which is held in the `rdi` register is populated with the content of the stack pointer `rsp` register. This proves that the `execve` syscall sets up the stack in the described way in the [diagram](./stack-layout.png).
+```rust
+#[no_mangle]
+#[naked]
+pub unsafe extern "C" fn _start() {
+    asm!(
+        "mov rdi, rsp",
+        "call main",
+        options(noreturn)
+    )
+}
+
+unsafe fn main(stack_top: *const u8) {
+    let argc = *(stack_top as *const u64);
+
+    todo!();
+}
+```
+
+- We then update `elk` so it can prepare a stack (arguments, environment variables, auxiliary vectors) prior to `jmp`ing to the entrypoint of the executable we are trying to run, just like `execve` does. For testing, we use `elk` to run `echidna` which, again, is a statically linked binary that just prints the content of its stack "manually" (not using any `libc`'s `getaux` or `getenv` methods, but by walking the memory through pointer manipulation from a given address supposed to be the top of the stack). Since the output from running `echidna` directly (through `execve`) and through `elk` is the same, this proves that we populated the stack properly in `elk` just like `execve` does.
+
+- To populate the data on the stack however, we resort to `std::env` and libc's `getauxval` (cf. NB2) to read `elk`'s own environment variables and auxiliary vectors which we just copy inside a `Vec<u64>` which represents the stack content. That `Vec` which lives in the heap of the `elk` process is then copied on the stack by incrementing the `rsp` register:
+```rust
+unsafe fn jmp(entry_point: *const u8, stack_contents: *const u64, qword_count: usize) {
+    asm!(
+        // allocate (qword_count * 8) bytes
+        "mov {tmp}, {qword_count}",
+        "sal {tmp}, 3",
+        "sub rsp, {tmp}",
+
+        ".l1:",
+        // start at i = (n-1)
+        "sub {qword_count}, 1",
+        // copy qwords to the stack
+        "mov {tmp}, QWORD PTR [{stack_contents}+{qword_count}*8]",
+        "mov QWORD PTR [rsp+{qword_count}*8], {tmp}", // we are incrementing the stack pointer here! so the elk's stack is growing
+        // loop if i isn't zero, break otherwise
+        "test {qword_count}, {qword_count}",
+        "jnz .l1",
+
+        "jmp {entry_point}",
+
+        entry_point = in(reg) entry_point,
+        stack_contents = in(reg) stack_contents,
+        qword_count = in(reg) qword_count,
+        tmp = out(reg) _,
+    )
+}
+```
+Hence the stack of the program executed lives on below `elk`'s stack. Said otherwise, above the stack of the program launched by `elk` there is still `elk`'s stack! (it's all one process).
+
+- NB: When creating the `Vec` that represents the stack content, we only push pointers inside that `Vec` - pointers to Strings for environment variables, arguments. Hence this data lives on the heap of the `elk`'s process, and needs to remain accessible to the program launched by `elk` which will need to access that data. In other words we need to make sure it does not get freed before we launch the program we want to execute through `elk`.
+
+- NB2: Instead of pulling the `libc` crate in order to use `getauxval`, we directly link to libc's `getauxval` directly (we know that the lib `libc` is marked as `NEEDED` for `std` rust application hence those symbols will be resolved at runtime):
+```rust
+// this is a quick libc binding thrown together (so we don't
+// have to pull in the `libc` crate).
+pub fn get(typ: AuxType) -> Option<Self> {
+    extern "C" {
+        // from libc (resolved at runtime by `ld.so` cf. part 11)
+        fn getauxval(typ: u64) -> u64;
+    }
+
+    unsafe {
+        match getauxval(typ as u64) {
+            0 => None,
+            value => Some(Self { typ, value }),
+        }
+    }
+}
+```
+This is basically what the `getauxval` function in the `libc` crate does, we just don't pull the whole crate just for one function.
+
+- In the `echidna` binary we don't read auxiliary vectors, args and environment using libc's `getaux`, `getenv` and `getargs`, we just manually walk the memory from one particular address (which is supposed to represent the top of the stack) through pointers manipulations so we are indeed reading the values of this "virtual" stack, otherwise `getenv` and `getaux` would take us to the top of the stack of the currently running process which is `elk`. 
+
+- NB: by construction, the auxiliary vector values copied in the "virtual" stack (which lives on top of the `elk`'s stack) are the same as those at the top of the `elk`'s process stack on which they are sitting. Hence the values are not all correct (for instance the AT_BASE is wrong since it points to `elk`'s base address).
+
+- NB: I don't know how libc's `getaux`, `getenv`, etc. find the top of the stack for a particular process. They obviously can't use `getaux` to get the `AT_BASE` value...
+
+- Finish by:
+    - [x] write the code to take aux vector into account
+    - [x] write the new main function which uses starts_with
+    - [x] TODO: try to compile without the compiler intrinsics in the Cargo.toml for echidna starts_with of the slice and see the linking error!
+    - [ ] make it work with implicits, still not working X-(
+
+When compiling without compiler_builtins in Cargo.toml:
+```
+error: linking with `cc` failed: exit status: 1
+  |
+  = note: LC_ALL="C" PATH="/home/proseau/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/x86_64-unknown-linux-gnu/bin:/home/proseau/.rustup/toolch
+= note: rust-lld: error: undefined symbol: memcmp
+      >>> referenced by cmp.rs:92 (/rustc/aa1d4f6826de006b02fed31a718ce4f674203721/library/core/src/slice/cmp.rs:92)
+      >>>               /home/proseau/projects/perso/rust-executable-packer/echidna/target/debug/deps/echidna-ae6b012009aef92b.4cbfa6toa57ergtvwoz8vjzuv.rcgu.
+o:(_$LT$$u5b$A$u5d$$u20$as$u20$core..slice..cmp..SlicePartialEq$LT$B$GT$$GT$::equal::h66c8d255f5ae7df4)
+      collect2: error: ld returned 1 exit status
+```
+
+
