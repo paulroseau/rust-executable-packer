@@ -1,0 +1,8 @@
+[package]
+name = "echidna"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Uncomment to try to use compiler_builtins (memcpy in particular)
+# compiler_builtins = { version = "0.1.113", features = ["mem"] }
