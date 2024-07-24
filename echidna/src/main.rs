@@ -1,6 +1,6 @@
 #![no_std]
 #![no_main]
-#![feature(naked_functions, lang_items)]
+#![feature(naked_functions, lang_items, thread_local)]
 
 #[panic_handler]
 fn panic(_info: &core::panic::PanicInfo) -> ! {
@@ -27,6 +27,8 @@ pub unsafe extern "C" fn _start() {
 
 #[no_mangle]
 unsafe fn main(stack_top: *const u8) {
+    play_with_tls();
+
     let argc = *(stack_top as *const u64);
 
     print(&[
@@ -155,4 +157,20 @@ impl AuxiliaryVector {
             _ => PrintArg::Number(self.value as usize)
         }
     }
+}
+
+#[thread_local]
+static mut FOO: u32 = 10;
+
+#[thread_local]
+static mut BAR: u32 = 100;
+
+#[no_mangle]
+unsafe fn play_with_tls() {
+    println!(FOO as usize);
+    println!(BAR as usize);
+    FOO *= 3;
+    BAR *= 5;
+    println!(FOO as usize);
+    println!(BAR as usize);
 }

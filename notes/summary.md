@@ -1314,7 +1314,7 @@ VS (regular rust executable)
         libgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x00007f1f1d9ed000)
 ```
 
-- When running `echidna` we can see that its stack is not by the dynamic loader `ld` (since it does not refer to it). The setting up of the stack is done by the Kernel following the call to the `execve` syscall. So our `elk` is doing more than `ld` it does both what `execve` and `ld` does. For instance the creation of the memory mapping is done by `execve` (check `man execve` for details). On Linux, `execve` creates the process data structure, the `pid`, sets up the memory mapping and based on the format of the executable (which most often is `ELF`) resolves a dynamic loader - typically `ld.so` - (or not if it is statically linked) and jumps to the entrypoint of that loader (or directly to the entrypoint of the executable if it is statically linked).
+- When running `echidna` we can see that its stack is not set by the dynamic loader `ld` (since it does not refer to it). The setting up of the stack is done by the Kernel following the call to the `execve` syscall. So our `elk` is doing more than `ld` it does both what `execve` and `ld` do. For instance the creation of the memory mapping (the one for the current object executable segments only) is done by `execve` (check `man execve` for details). On Linux, `execve` creates the process data structure, the `pid`, sets up the memory mapping and based on the format of the executable (which most often is `ELF`) resolves a dynamic loader - typically `ld.so` - (or not if it is statically linked) and jumps to the entrypoint of that loader for it to load the shared object in memory and adjust relocations. If it is statically linked, `execve` directly jumps to the entrypoint of the executable.
 
 - We simplify the code by:
   1. implementing the `From` trait for the `PrintArg` enum (we do it for `usize`, u8 slices and fixed size arrays of `u8` - necessary for hardcoded strings)
@@ -1324,7 +1324,7 @@ VS (regular rust executable)
   - implement our own `memcpy` (or our own `starts_with` since that's all we will use in this case)
   - or ask the compiler to generate it by using the `compiler_builtins` crate which includes a series low level functions implemented through `asm`
 
-- NB: the `compiler_builtins` crate is precisely a crate where `intrinsics` (operations that are built-in the compiler) are ported such that you can compile some rust code against a target that `rustc` does not support yet. It boils down to making `rustc` smaller. When trying to compile without:
+- NB: the `compiler_builtins` crate is precisely a crate where `intrinsics` (operations that are built-in the compiler) are ported such that you can compile some rust code against a target that `rustc` does not support yet. It boils down to making `rustc` smaller. When trying to compile without this crate:
 ```toml
 [dependencies]
 compiler_builtins = { version = "0.1.113", features = ["mem"] }
@@ -1438,22 +1438,229 @@ This is basically what the `getauxval` function in the `libc` crate does, we jus
 
 - NB: I don't know how libc's `getaux`, `getenv`, etc. find the top of the stack for a particular process. They obviously can't use `getaux` to get the `AT_BASE` value...
 
-- Finish by:
-    - [x] write the code to take aux vector into account
-    - [x] write the new main function which uses starts_with
-    - [x] TODO: try to compile without the compiler intrinsics in the Cargo.toml for echidna starts_with of the slice and see the linking error!
-    - [ ] make it work with implicits, still not working X-(
+# Part 13: Thread local storage
 
-When compiling without compiler_builtins in Cargo.toml:
+- useful source on POSIX threads:
+  - https://blog.gistre.epita.fr/posts/odric.roux-paris-2023-01-31/
+
+- NB: The `%rip` register holds the virtual address of the instruction we are currently executing. Transferring control means updating the `%rip` register. On `x86_64` you can't write to `%rip` with a `mov` instruction but you need to use the `jmp`, `call` or `ret` instructions. If you are executing some code in userland changing control also implies changing from ring 0 to ring 3 (more restrained access to the CPU), updating the the virtual memory mapping from the Kernel's to the process's mapping (with `satp` - the author does not go into details here).
+
+- Processes implement a form of pre-emptive multi-tasking. The Kernel keeps setting a timer interrupt which stops the running process each time the timer interrupt fires. Threads behave the same way. However threads share the same address space (memory), which is not the case of processes.
+
+- NB: an alternative to pre-emptive multi-tasking is cooperative multi-tasking where "co-routines" run until they decide to relinquish control explicitly and give a chance to other co-routines to run.
+
+- Even though threads share the same memory, they still need to be able to store some data specific to each thread. In particular each thread need to have its own:
+  - stack (otherwise you could not have distinct streams of execution)
+  - Thread Local Storage (TLS): where data that is local to the thread only is saved. 
+  - a specific guard page
+
+- `glibc` implements POSIX threads for several platforms. For Linux it does the following when creating a thread:
+  - it allocates some memory for the thread (TLS + stack) using `mmap`
+  - at the top of this memory, it will write a data structure of type `pthread` which holds a lot of information regarding the execution of the thread:
+    - its thread ID appointed by the kernel (which is equal to the address pointing at the top of that `pthread` struct, in other words it holds a reference to itself)
+    - parameters and the function that the thread is executing
+    - parameters for the scheduler, whether the user provides the thread with its own stack, etc.
+  - then it will write into the `fs` register the value of the thread ID (which again is the address of where the `pthread` struct was written)
+    - if we are in the main thread (the one started at the begining of the process execution), the `fs` register is written through the `arch_prctl` syscall
+    - if we are starting a child thread, the `fs` register is written through the `clone` syscall (where the `CLONE_THREAD` flag is set) which itself is called by the `pthread_create` `glibc` function
+
+- Hence on Linux for a `x86_64` processor, the `fs` register is used to store the "origin" for Thread Local Data (TLD). Indeed lower when we modify the `echidna` program with some static TLD data. We will see this static data gets allocated at addresses just below the address stored in `fs`, which makes it feel like the address stored in `fs` is the top of the stack for each thread. We also see that the `pthread` data structure is stored from the address stored at `fs` going up. Hence the address of Thread Local variables which are static can be referenced relatively to the address stored in `fs` (for instance `fs:0xfffffffffffffff8` cf. lower).
+
+- It seems from [this question](https://stackoverflow.com/questions/43219214/where-is-the-value-of-the-current-stack-pointer-register-stored-before-context-s) that `glibc` does not store the value of the stack pointer or execution pointer for each thread inside the `pthread` struct, but this is handled by the kernel, meaning when a thread is interrupted the handler saves all its register somewhere in memory and restores the values of these registers when rescheduling the thread (just like for regular processes). My guess is that if we look at the value of the `rsp` (stack pointer) for a given thread, it will be "close" to the value stored in the `fs` register, because this is where the stack is stored (each thread has their own stack). After updating and running the [C program](../playground/part-13/two-threads.c) we see that this is kind of the case:
+    ```
+    thread 0x7fafb55ee6c0 <- this prints the content of the `fs` register
+    x = 5                 <- this is some variable on the stack in that thread
+    &x = 0x7fafb55edecc   <- kind of close to what the address stored `fs` register 0x7fafb55ee6c0
+    ===========
+    thread 0x7fafb5def6c0 <- this prints the content of the `fs` register
+    x = 9                 <- this is some variable on the stack in that thread
+    &x = 0x7fafb5deeecc   <- kind of close to what the address stored `fs` register 0x7fafb55ee6c0
+    ```
+When inspecting in `gdb` we see that `p/x $fs_base` returns the same values as the thread IDs printed above, and `p $rsp` (printing the stack pointer) is a few addresses above the address of the local variable `x` for both threads. However for the main thread, when inspecting with `gdb` it seems like the stack pointer is in a completely different area:
 ```
-error: linking with `cc` failed: exit status: 1
-  |
-  = note: LC_ALL="C" PATH="/home/proseau/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/x86_64-unknown-linux-gnu/bin:/home/proseau/.rustup/toolch
-= note: rust-lld: error: undefined symbol: memcmp
-      >>> referenced by cmp.rs:92 (/rustc/aa1d4f6826de006b02fed31a718ce4f674203721/library/core/src/slice/cmp.rs:92)
-      >>>               /home/proseau/projects/perso/rust-executable-packer/echidna/target/debug/deps/echidna-ae6b012009aef92b.4cbfa6toa57ergtvwoz8vjzuv.rcgu.
-o:(_$LT$$u5b$A$u5d$$u20$as$u20$core..slice..cmp..SlicePartialEq$LT$B$GT$$GT$::equal::h66c8d255f5ae7df4)
-      collect2: error: ld returned 1 exit status
+(gdb) thread 1
+[Switching to thread 1 (Thread 0x7ffff7ddc740 (LWP 1326438))]
+#0  0x00007ffff7e65106 in ?? () from /usr/lib/x86_64-linux-gnu/libc.so.6
+(gdb) p/x $fs_base
+$3 = 0x7ffff7ddc740
+(gdb) p $rsp
+$4 = (void *) 0x7fffffffdd30
+```
+vs for the 2 threads we have:
+```
+(gdb) thread 2
+(gdb) p/x $fs_base
+$1 = 0x7ffff7ddb6c0
+(gdb) p $rsp
+$2 = (void *) 0x7ffff7ddaed0
+(gdb) thread 3
+(gdb) p/x $fs_base
+$5 = 0x7ffff75da6c0
+(gdb) p $rsp
+$6 = (void *) 0x7ffff75d9ed0
+```
+NB: 1. we notice that there is a page allocated for each thread local data, rsp, fs_base refer to address in each of those page according to which thread we are executing (however those are 1000 addresses apart, one is at the very begining of a page, the other at the very end), try with 3 threads
+    2. Just above the tcb_head we see some padding, a few bytes of data referring to some read-only and read-write data in libc, a lot of padding, some data (reference to $fs_base again, some libc executable code (1 address), before we get to the begining of the stack
+TODO RESUME FROM HERE
+- essayer avec 2 threads different (pas la meme fonction) + variable local
+- essayer avec 3 threads
+- faire des dumps propres
+
+- The TLS of each thread is visible to the other threads because they all share the same address space, but upon switching from one thread to another, the kernel updates the `fs` reigster with the address of the TLS of the thread about to be scheduled. This [diagram](./thread-data-layout.png) shows the layout of the memory.
+
+- To illustrate this behavious we write a small [C program](../playground/part-13/two-threads.c) which spawns 2 threads so we can use `gdb` to inspect.
+
+- NB: Here are some useful commands we use in this `gdb` session:
+  - `info reg` shows all registers in gdb
+  - `info sharedlibrary`: prints all the shared library mounted linked in the executable
+  - `info threads`: shows all running threads
+  - `thread X`: switch to inspecting thread X
+  - `thread apply all <command>`: runs command for all threads, for instance `info registers`.
+  - `set scheduler-locking on`: allows `gdb` to ask the Kernel not to pre-empt the current thread (because we want to inspect it).
+
+- pthreads (Posix threads) are actually implemented by `/usr/lib/libpthread.so.0`  which exposes the function `pthread_self()` which returns the thread ID. Disassembling it we see that:
+```
+(gdb) disas pthread_self
+Dump of assembler code for function pthread_self:
+   0x00007ffff7e6f910 <+0>:     mov    rax,QWORD PTR fs:0x10
+   0x00007ffff7e6f919 <+9>:     ret
+End of assembler dump.
+```
+which makes it seem that the thread ID is stored in the `%fs` register. The thread ID cannot be the same for all threads, hence there is some mechanism to allow threads to have some memory of their own. 
+
+- NB: there is a whole explanation about when this
+
+- NB: there is a whole explanation about when the segment registers were added to the intel architecture:
+  - `%ss` (stack segment, pointer to the stack)
+  - `%cs` (code segment, pointer to the code)
+  - `%ds` (data segment, pointer to the data)
+  - `%es` (extra segment, pointer to extra data, 'e' stands for 'extra').
+  - `%fs` (f segment, pointer to more extra data, 'f' comes after 'e').
+  - `%gs` (g segment, pointer to still more extra data, 'g' comes after 'f').
+  these segment registers were introduced back in the days when the addresses were wider than the data (they would hold the most significant bits of addresses and were used to interpret an address based on the type of the instruction executed). Now that address and data are the same length (at least 32 bits) and that addresses are wide enough to index into the whole memory, these segment registers became less useful. `%fs` in particular was "recylced" to point to Thread Local Storage (`.tdata` section in the ELF file).
+
+- NB: you lacked the debugging information on your machine for `libpthread`, so I added a call to `pthread_self()` so we could disassemble it from the debugging session.
+
+- However `gdb` cannot show the content of `%fs`, trying to print the content of this register for all threads shows the same content:
+```
+(gdb) thread apply all info registers fs
+
+Thread 3 (Thread 0x7ffff75dc6c0 (LWP 361812) "two-threads"):
+fs             0x0                 0
+
+Thread 2 (Thread 0x7ffff7ddd6c0 (LWP 361811) "two-threads"):
+fs             0x0                 0
+
+Thread 1 (Thread 0x7ffff7dde740 (LWP 361808) "two-threads"):
+fs             0x0                 0
+```
+This output from `gdb` does not reflect reality because:
+  - otherwise `pthread_self()` would cause a segfault (it tries to read data from `fs+0x10` above which is not accessible) but it does not
+  - also all threads should have a different thread ID
+
+- To find out what is the content of `fs` we can use the `arch_prctl` system call (since `libc` is already linked in the program [two-threads](../playground/part-13/two-threads) we can just call it inside the `gdb` session):
+```
+# to avoid to switch thread while debugging
+(gdb) set scheduler-locking on
+# the syntax is print (return_type) function(args), here the return type is an address (*void)
+(gdb) print (void*) pthread_self()
+$5 = (void *) 0x7ffff75dc6c0
+# the syscall function does not put the return type in rax, you need to specify the address directly
+(gdb) print (void) arch_prctl(0x1003, $rsp-0x8)
+$6 = void
+# we read the content manually
+(gdb) x/gx $rsp-0x8
+0x7ffff75dbec8: 0x00007ffff75dc6c0
+```
+NB: The libc wrapper function `arch_prctl` around the syscall of the same name, takes 2 arguments: the first argument controls whether you want to read from/write to fs/gs (`0x1003`: read fs, `0x1004`: write fs), the second argument (here we used the next address below the stack pointer) indicates the address in memory to write the result to.
+
+- NB: if you use a late enough version of `gdb`, `gdb` can actually show you the content of the `$fs` register of the thread currently executed with through the `$fs_base` variable (the above method using the syscall `arch_prctl` is lower level):
+```
+Thread 2 "two-threads" hit Breakpoint 1, 0x000055555555517d in in_thread ()
+(gdb) thread apply all info registers fs_base 
+
+Thread 3 (Thread 0x7ffff75da6c0 (LWP 242979) "two-threads"):
+fs_base        0x7ffff75da6c0      140737343497920
+
+Thread 2 (Thread 0x7ffff7ddb6c0 (LWP 242978) "two-threads"):
+fs_base        0x7ffff7ddb6c0      140737351890624
+
+Thread 1 (Thread 0x7ffff7ddc740 (LWP 242975) "two-threads"):
+fs_base        0x7ffff7ddc740      140737351894848
 ```
 
+- We modify `echidna` to include Thread Local Storage values with:
+```rust
+#![feature(thread_local)]
 
+#[thread_local]
+static mut FOO: u32 = 10;
+#[thread_local]
+static mut BAR: u32 = 100;
+
+#[no_mangle]
+unsafe fn play_with_tls() {
+    println!(FOO as usize);
+    ...
+}
+```
+After compiling we see the addition of a new section in the ELF executable:
+```
+readelf -WS ./target/release/echidna
+There are 16 section headers, starting at offset 0xe98:
+
+Section Headers:
+  [Nr] Name              Type            Address          Off    Size   ES Flg Lk Inf Al
+  ...
+  [ 9] .tdata            PROGBITS        0000000000002b64 000b64 000008 00 WAT  0   0  4
+  ...
+Key to Flags:
+  W (write), A (alloc), X (execute), M (merge), S (strings), I (info),
+  L (link order), O (extra OS processing required), G (group), T (TLS),
+  C (compressed), x (unknown), o (OS specific), E (exclude),
+  D (mbind), l (large), p (processor specific)
+```
+
+- Looking at the content in the ELF file at the `Off` location (offset in the file / `Address` is the position in the binary) we can see the initial thread local data written there:
+```
+# -s is for seek, -e is for little endian, -g 4 is to group 4 bytes together (32 bits)
+xxd -s $((0xb64) -e -g 4 ./echidna | head -n 3
+```
+Output shows:
+```
+❯ xxd -s $((0xb64) -e -g 4 ./echidna | head -n 1
+00000b64: 0000000a 00000064 00000000 0000001e   ....d...........
+❯ echo $((0x0000000a)) $((0x00000064))
+10 100
+```
+and we can see that this data is mounted at run time below the address held in the `$fs` register. Indeed when disasembling the instructions while running `echidna` with gdb:
+```
+(gdb) b play_with_tls 
+Breakpoint 1 at 0x3207: file src/main.rs, line 170.
+(gdb) run
+Starting program: /home/proseau/projects/perso/rust-executable-packer/echidna/target/debug/echidna 
+
+Breakpoint 1, echidna::play_with_tls () at src/main.rs:170
+170         println!(FOO as usize);
+(gdb) p FOO
+Cannot find thread-local storage for process 814315, executable file /home/proseau/projects/perso/rust-executable-packer/echidna/target/debug/echidna:
+Cannot find thread-local variables on this target
+(gdb) # the above does not work because we didn't link echidna with glibc, and gdb relies on glibc to find locate each thread local data - cf. our test lower in two-threads.
+(gdb) disas
+Dump of assembler code for function echidna::play_with_tls:
+   0x0000555555557200 <+0>:     sub    rsp,0x1c8
+=> 0x0000555555557207 <+7>:     mov    eax,DWORD PTR fs:0xfffffffffffffff8 <- this proves that the fs register is leveraged to store the address of TLS data
+(gdb) # let's see what is at this address, knowing that 0xfffffffffffffff8 is just -8 for 32 bytes values (1 letter = 16 bits, 1/2 byte), and that the actual content held in register fs can be seen by using $fs_base
+(gdb) x/d $fs_base - 8
+0x7ffff7fc2b38: 10
+```
+
+- TODO:
+  - [x] update echidna with thread local data
+  - [x] find where the Thread Local Storage is located by looking at relevant instructions and where they load data from
+  - [x] go to TO BE CHECKED
+  - [ ] rewrite all the notes for part 13 properly (shorter better organized)
+  - [ ] take screenshot of what the TLS data looks like: below the address inside $fs and above (with the pthread struct tric)
+  - [x] perform the debugging trick to see the TCB (what does it stand for?)
+  - [ ] introduce also thread local storage in the twothreads program with extern __thread
+  - [ ] check out what tpoff is cf. https://docs.oracle.com/cd/E19120-01/open.solaris/819-0690/chapter8-70/index.html, seems like the code is complicated, we just find errno with respect to the value stored in fs because once loaded

@@ -470,3 +470,54 @@ impl IsTrue for Assert<true> {}
 ```
 
 - What can go behind a `const T: ???` can be either a literal (an integer, bool or char), or an expression which evaluates to such literal. I believe this expression will be evaluated at runtime.
+
+# Pretty printing in GDB
+
+- In `gdb` you can call a function that is defined in the inferior (the executable you are currently debugging) or in a shared library that the inferior links to.
+
+- You can print the result of such a function following this syntax:
+```
+(gdb) print (return_type) function(args)
+```
+For instance if you are debugging a C program and the signature of the function
+is `void* f(int i);` you can do:
+```
+(gdb) print (void*) f(3)
+```
+and `gdb` will print the returned address (it formats the result based on its
+type so in this case it will print like if you had use `x/gx`).
+
+- If the returned type is a complex struct, you can:
+  - write an extra C file with the definition of the struct and a dummy variable so the struct gets recorded in the debug information:
+  ```c
+  typedef struct
+  {
+    void* a_pointer;
+    int an_integer;
+    void* some_padding[8];
+  } super_complex_struct;
+
+  // dummy variable so the struct gets recorded in the debug information
+  super_complex_struct s;
+  ```
+  - compile the C file with debug information thanks to the `g` option:
+  ```sh
+  gcc -c -g super-complex-struct.c # use -g
+  ```
+  - inside your `gdb` session load the symbol from the object file:
+  ```
+  (gdb) add-symbol-file ./path/to/super-complex-struct.o
+  ```
+  - if you were debugging a program written in another language than C (because it linked to `libc` for example and you needed to define a C struct for debugging), switch the language type in the `gdb` session:
+  ```
+  (gdb) set language c
+  ```
+  - optionally you can tell `gdb` to print structures with in an indented format rather than on 1 line with:
+  ```
+  (gdb) set print pretty on
+  ```
+  - then you can print the content in memory from particular address by casting the value of the address to a pointer to the struct you defined, and dereferencing this pointer:
+  ```
+  # if the rax register holds a valid address, gdb will interpret the bytes in memory located at that address as a super_complex_struct
+  (gdb) print *(super_complex_struct *) $rax
+  ```
