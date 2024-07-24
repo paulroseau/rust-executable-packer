@@ -1,0 +1,362 @@
+❯ cat /proc/1633764/maps
+555555554000-555555555000 r--p 00000000 fd:01 5111830                    /home/proseau/projects/perso/rust-executable-packer/playground/part-13/output/two-threads-debug
+555555555000-555555556000 r-xp 00001000 fd:01 5111830                    /home/proseau/projects/perso/rust-executable-packer/playground/part-13/output/two-threads-debug
+555555556000-555555557000 r--p 00002000 fd:01 5111830                    /home/proseau/projects/perso/rust-executable-packer/playground/part-13/output/two-threads-debug
+555555557000-555555558000 r--p 00002000 fd:01 5111830                    /home/proseau/projects/perso/rust-executable-packer/playground/part-13/output/two-threads-debug
+555555558000-555555559000 rw-p 00003000 fd:01 5111830                    /home/proseau/projects/perso/rust-executable-packer/playground/part-13/output/two-threads-debug
+555555559000-55555557a000 rw-p 00000000 00:00 0                          [heap]
+7ffff65d9000-7ffff65da000 ---p 00000000 00:00 0
+7ffff65da000-7ffff6dda000 rw-p 00000000 00:00 0
+7ffff6dda000-7ffff6ddb000 ---p 00000000 00:00 0
+7ffff6ddb000-7ffff75db000 rw-p 00000000 00:00 0
+7ffff75db000-7ffff75dc000 ---p 00000000 00:00 0
+7ffff75dc000-7ffff7ddf000 rw-p 00000000 00:00 0
+7ffff7ddf000-7ffff7e05000 r--p 00000000 fd:01 4458848                    /usr/lib/x86_64-linux-gnu/libc.so.6
+7ffff7e05000-7ffff7f5b000 r-xp 00026000 fd:01 4458848                    /usr/lib/x86_64-linux-gnu/libc.so.6
+7ffff7f5b000-7ffff7fb0000 r--p 0017c000 fd:01 4458848                    /usr/lib/x86_64-linux-gnu/libc.so.6
+7ffff7fb0000-7ffff7fb4000 r--p 001d0000 fd:01 4458848                    /usr/lib/x86_64-linux-gnu/libc.so.6
+7ffff7fb4000-7ffff7fb6000 rw-p 001d4000 fd:01 4458848                    /usr/lib/x86_64-linux-gnu/libc.so.6
+7ffff7fb6000-7ffff7fc5000 rw-p 00000000 00:00 0
+7ffff7fc5000-7ffff7fc9000 r--p 00000000 00:00 0                          [vvar]
+7ffff7fc9000-7ffff7fcb000 r-xp 00000000 00:00 0                          [vdso]
+7ffff7fcb000-7ffff7fcc000 r--p 00000000 fd:01 4458830                    /usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2
+7ffff7fcc000-7ffff7ff1000 r-xp 00001000 fd:01 4458830                    /usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2
+7ffff7ff1000-7ffff7ffb000 r--p 00026000 fd:01 4458830                    /usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2
+7ffff7ffb000-7ffff7ffd000 r--p 00030000 fd:01 4458830                    /usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2
+7ffff7ffd000-7ffff7fff000 rw-p 00032000 fd:01 4458830                    /usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2
+7ffffffde000-7ffffffff000 rw-p 00000000 00:00 0                          [stack]
+
+
+(gdb) thread apply all print/x $fs_base
+
+Thread 4 (Thread 0x7ffff6dd96c0 (LWP 1633769) "two-threads-deb"):
+$2 = 0x7ffff6dd96c0
+-> 7ffff65da000-7ffff6dda000 rw-p 00000000 00:00 0
+
+Thread 3 (Thread 0x7ffff75da6c0 (LWP 1633768) "two-threads-deb"):
+$3 = 0x7ffff75da6c0
+-> 7ffff6ddb000-7ffff75db000 rw-p 00000000 00:00 0
+
+Thread 2 (Thread 0x7ffff7ddb6c0 (LWP 1633767) "two-threads-deb"):
+$4 = 0x7ffff7ddb6c0
+-> 7ffff75dc000-7ffff7ddf000 rw-p 00000000 00:00 0
+
+Thread 1 (Thread 0x7ffff7ddc740 (LWP 1633764) "two-threads-deb"):
+$5 = 0x7ffff7ddc740
+-> 7ffff75dc000-7ffff7ddf000 rw-p 00000000 00:00 0
+
+Observation: we see that the address of `fs_base` (ie. the root of the TLS data) falls in the same page for Thread 1 and 2. Trying with 4 threads we don't see a new page created so it seems that a page is not necessarily allocated for each thread). 
+
+
+(gdb) thread apply all print/x $rsp
+
+Thread 4 (Thread 0x7ffff6dd96c0 (LWP 1633769) "two-threads-deb"):
+$35 = 0x7ffff6dd8f80
+
+Thread 3 (Thread 0x7ffff75da6c0 (LWP 1633768) "two-threads-deb"):
+$36 = 0x7ffff75d9eb0
+
+Thread 2 (Thread 0x7ffff7ddb6c0 (LWP 1633767) "two-threads-deb"):
+$37 = 0x7ffff7ddaeb0
+
+Thread 1 (Thread 0x7ffff7ddc740 (LWP 1633764) "two-threads-deb"):
+$38 = 0x7fffffffdb88
+
+
+
+(gdb) thread apply all print/d $rsp - $fs_base
+
+Thread 4 (Thread 0x7ffff6dd96c0 (LWP 1633769) "two-threads-deb"):
+$39 = -1856
+
+Thread 3 (Thread 0x7ffff75da6c0 (LWP 1633768) "two-threads-deb"):
+$40 = -2064
+
+Thread 2 (Thread 0x7ffff7ddb6c0 (LWP 1633767) "two-threads-deb"):
+$41 = -2064
+
+Thread 1 (Thread 0x7ffff7ddc740 (LWP 1633764) "two-threads-deb"):
+$42 = 136451144
+
+Observation: we see that for the main thread (the one that is launched at the begining of the process, the stack lives very far from the address stored inside register `fs`)
+
+
+Layout of memory from $rsp down for one thread:
+(gdb) thread
+
+[Current thread is 2 (Thread 0x7ffff7ddb6c0 (LWP 1633767))]
+
+(gdb) p/x $rsp
+$43 = 0x7ffff7ddaeb0
+(gdb) p/x $rbp
+$44 = 0x7ffff7ddaed0
+
+(gdb) x/300xg $rsp
+0x7ffff7ddaeb0: 0x0000000000000000      0x0000000000000000 <- $rsp
+0x7ffff7ddaec0: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddaed0: 0x0000000000000000      0x00007ffff7e6839c <- $rbp (inside libc executable section: 7ffff7e05000-7ffff7f5b000 r-xp 00026000 
+                                                              check lower for corresponding instructions, it seems to be related to thread handling)
+0x7ffff7ddaee0: 0x0000000000000000      0x00007ffff7ddb6c0 <- pointer to tcb-head
+0x7ffff7ddaef0: 0x00007ffff7e680e0      0x5e931046c9881b5a
+0x7ffff7ddaf00: 0xffffffffffffff88      0x0000000000000000
+0x7ffff7ddaf10: 0x00007fffffffdbe0      0x00007ffff75db000
+0x7ffff7ddaf20: 0xa16cfffd94481b5a      0xa16cff8bcab01b5a
+0x7ffff7ddaf30: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddaf40: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddaf50: 0x0000000000000000      0x111eea402e66a300
+0x7ffff7ddaf60: 0x00007ffff7e680e0      0x0000000000000000
+0x7ffff7ddaf70: 0xffffffffffffff88      0x00007ffff7ee9608
+0x7ffff7ddaf80: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddaf90: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddafa0: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddafb0: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddafc0: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddafd0: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddafe0: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddaff0: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb000: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb010: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb020: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb030: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb040: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb050: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb060: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb070: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb080: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb090: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb0a0: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb0b0: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb0c0: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb0d0: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb0e0: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb0f0: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb100: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb110: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb120: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb130: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb140: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb150: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb160: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb170: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb180: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb190: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb1a0: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb1b0: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb1c0: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb1d0: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb1e0: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb1f0: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb200: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb210: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb220: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb230: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb240: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb250: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb260: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb270: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb280: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb290: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb2a0: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb2b0: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb2c0: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb2d0: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb2e0: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb2f0: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb300: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb310: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb320: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb330: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb340: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb350: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb360: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb370: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb380: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb390: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb3a0: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb3b0: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb3c0: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb3d0: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb3e0: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb3f0: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb400: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb410: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb420: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb430: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb440: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb450: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb460: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb470: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb480: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb490: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb4a0: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb4b0: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb4c0: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb4d0: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb4e0: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb4f0: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb500: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb510: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb520: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb530: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb540: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb550: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb560: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb570: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb580: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb590: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb5a0: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb5b0: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb5c0: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb5d0: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb5e0: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb5f0: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb600: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb610: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb620: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb630: 0x0000000000000000      0x00007ffff7fb53c0 (inside read-write section of libc 7ffff7fb4000-7ffff7fb6000 rw-p)
+0x7ffff7ddb640: 0x00007ffff7ddbd78      0x0000000000000000 <- reference to lower data, probably belonging to tcbhead
+0x7ffff7ddb650: 0x00007ffff7f5c4c0      0x00007ffff7f5cac0 (inside read-write section of libc 7ffff7fb4000-7ffff7fb6000 rw-p)
+0x7ffff7ddb660: 0x00007ffff7f5d3c0      0x0000000000000000 (inside read-write section of libc 7ffff7fb4000-7ffff7fb6000 rw-p)
+0x7ffff7ddb670: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb680: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb690: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb6a0: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb6b0: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb6c0: 0x00007ffff7ddb6c0      0x00005555555592b0 <- begin of tcbhead structure (address matching the content of $fs_base)
+0x7ffff7ddb6d0: 0x00007ffff7ddb6c0      0x0000000000000001
+0x7ffff7ddb6e0: 0x0000000000000000      0x111eea402e66a300
+0x7ffff7ddb6f0: 0x0dad2f49882364c4      0x0000000000000000
+0x7ffff7ddb700: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb710: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb720: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb730: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb740: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb750: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb760: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb770: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb780: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb790: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb7a0: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb7b0: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb7c0: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb7d0: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb7e0: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb7f0: 0x0000000000000000      0x0000000000000000
+0x7ffff7ddb800: 0x0000000000000000      0x0000000000000000
+(gdb) 
+
+Looking at what are the instructions referred to a few addresses below rsp (executable code of libc), it seems to be related to thread handling:
+
+(gdb) x/10i 0x7ffff7e6839c - 0x5
+   0x7ffff7e68397:      nop
+   0x7ffff7e68398:      cmp    BYTE PTR [rsi],al
+   0x7ffff7e6839a:      add    BYTE PTR [rax],al
+   0x7ffff7e6839c:      jmp    0x7ffff7e68212
+   0x7ffff7e683a1:      mov    rax,QWORD PTR [rsp+0x8]
+   0x7ffff7e683a6:      xor    ecx,ecx
+   0x7ffff7e683a8:      mov    QWORD PTR [rax+0x620],rcx
+   0x7ffff7e683af:      xor    eax,eax
+   0x7ffff7e683b1:      xchg   DWORD PTR [rbx],eax
+   0x7ffff7e683b3:      sub    eax,0x1
+
+(gdb) x/20i 0x7ffff7e68212 - 0x5
+   0x7ffff7e6820d:      (bad)
+   0x7ffff7e6820e:      add    BYTE PTR [rax],al
+   0x7ffff7e68210:      cdqe
+   0x7ffff7e68212:      mov    QWORD PTR fs:0x628,rax
+   0x7ffff7e6821b:      call   0x7ffff7e1e2a0 <__call_tls_dtors>
+   0x7ffff7e68220:      call   0x7ffff7e65620
+   0x7ffff7e68225:      call   0x7ffff7e7a6e0
+   0x7ffff7e6822a:      mov    rax,QWORD PTR [rsp+0x8]
+   0x7ffff7e6822f:      cmp    BYTE PTR [rax+0x611],0x0
+   0x7ffff7e68236:      jne    0x7ffff7e68463
+   0x7ffff7e6823c:      mov    rax,QWORD PTR [rsp+0x8]
+   0x7ffff7e68241:      lock or DWORD PTR [rax+0x308],0x10
+   0x7ffff7e68249:      lock sub DWORD PTR [rip+0x14be7f],0x1        # 0x7ffff7fb40d0 <__nptl_nthreads>
+   0x7ffff7e68251:      je     0x7ffff7e6841f
+   0x7ffff7e68257:      mov    r8,QWORD PTR [rsp+0x8]
+   0x7ffff7e6825c:      mov    r10d,0x8
+   0x7ffff7e68262:      xor    edx,edx
+   0x7ffff7e68264:      xor    edi,edi
+   0x7ffff7e68266:      movabs rax,0xfffffffeffffffff
+   0x7ffff7e68270:      mov    QWORD PTR [r8+0x8f0],rax
+
+Confirming that the stack is indeed around $rsp (kind of obvious but)
+
+(gdb) stepi
+thread 0x7ffff75da6c0
+x = 5
+&x = 0x7ffff75d9ecc
+===========
+0x000055555555519a      7           sleep(1);
+(gdb) thread apply all print/d $rsp - 0x7ffff75d9ecc
+
+Thread 4 (Thread 0x7ffff6dd96c0 (LWP 1633769) "two-threads-deb"):
+$83 = -8392844
+
+Thread 3 (Thread 0x7ffff75da6c0 (LWP 1633768) "two-threads-deb"): <- matches the thread that was printing
+$84 = -28
+
+Thread 2 (Thread 0x7ffff7ddb6c0 (LWP 1633767) "two-threads-deb"):
+$85 = 8392548
+
+Thread 1 (Thread 0x7ffff7ddc740 (LWP 1633764) "two-threads-deb"):
+$86 = 144850484
+
+Checking the strcture of the tcbhead (part of the bigger pthread struct):
+
+
+(gdb) add-symbol-file ./output/tcb-head.o 
+add symbol table from file "./output/tcb-head.o"
+(y or n) y
+Reading symbols from ./output/tcb-head.o...
+(gdb) set print pretty on
+(gdb) run
+Starting program: /home/proseau/projects/perso/rust-executable-packer/playground/part-13/output/two-threads-debug 
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/nix/store/8mc30d49ghc8m5z96yz39srlhg5s9sjj-glibc-2.38-44/lib/libthread_db.so.1".
+[New Thread 0x7ffff7ddb6c0 (LWP 1783478)]
+[New Thread 0x7ffff75da6c0 (LWP 1783479)]
+[Switching to Thread 0x7ffff7ddb6c0 (LWP 1783478)]
+
+Thread 2 "two-threads-deb" hit Breakpoint 1, in_thread_0 (unused=0x0 <t>) at src/two-threads.c:14
+warning: Source file is more recent than executable.
+14          int x = 3;
+(gdb) print *(tcbhead_t*) $fs_base
+$1 = {
+  tcb = 0x7ffff7ddb6c0,
+  dtv = 0x5555555592b0,
+  self = 0x7ffff7ddb6c0,
+  multiple_threads = 1,
+  gscope_flag = 0,
+  sysinfo = 0,
+  stack_guard = 7045467244239577344,
+  pointer_guard = 8854247829791511462,
+  vgetcpu_cache = {0, 0},
+  feature_1 = 0,
+  __glibc_unused1 = 0,
+  __private_tm = {0x0 <t>, 0x0 <t>, 0x0 <t>, 0x0 <t>},
+  __private_ss = 0x0 <t>,
+  ssp_base = 0,
+  __glibc_unused2 = {{{
+        i = {0, 0, 0, 0}
+      }, {
+        i = {0, 0, 0, 0}
+      }, {
+        i = {0, 0, 0, 0}
+      }, {
+        i = {0, 0, 0, 0}
+      }}, {{
+        i = {0, 0, 0, 0}
+      }, {
+        i = {0, 0, 0, 0}
+      }, {
+        i = {0, 0, 0, 0}
+      }, {
+        i = {0, 0, 0, 0}
+      }}, {{
+        i = {0, 0, 0, 0}
+      }, {
+        i = {0, 0, 0, 0}
+      }, {
+      ...
