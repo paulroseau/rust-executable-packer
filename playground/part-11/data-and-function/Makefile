@@ -8,7 +8,10 @@ all: chimera chimera.s
 
 chimera: chimera.c libfoo.so libbar.so
 	gcc -c chimera.c ${CFLAGS}
-	gcc chimera.o -o chimera -lfoo -lbar ${LDFLAGS}
+	# This does not work because the linker does one pass on dependencies so since
+	# lbar depends on lfoo, it needs to come before
+	# gcc chimera.o -o chimera -lfoo -lbar ${LDFLAGS}
+	gcc chimera.o -o chimera -lbar -lfoo ${LDFLAGS}
 
 libfoo.so: foo.c
 	gcc -c foo.c ${CFLAGS}
