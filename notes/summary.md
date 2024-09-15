@@ -1653,3 +1653,15 @@ fs_base        0x7ffff7ddc740      140737351894848
   NB: honestly this part is a bit hard to follow since I didn't edit `elk` along the way and the writing from the author is pretty confusing
 
 - There is a little detour about how to use different type for each state of the process, when you do Process::new you get a `Process<Initialized>`, then on `Process<Initialized>` you define other read only method and a method that takes you to the next state etc.
+
+# Part 14: In the bowels of glibc
+
+- This part is verbose and hard to follow. 
+
+- It goes into talking about:
+  - why we need a heap
+  - how does malloc gets initialized
+
+- Its main point is that static executable and static PIE executable have relocations as well but don't have an interpreter. Those relocations are indirect relocations and are processed by `libc` which actually depends on `ld.so`.
+
+- It was a good occasion to summarize all that you learnt about the dynamic loader, ELF relocations, C symbols in those [consolidated notes](./program-execution.md) on this part.

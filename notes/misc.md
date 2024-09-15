@@ -1,44 +1,46 @@
-# Function pointers in C
+# Miscalleneous notes
+
+## Function pointers in C
 
 Source: https://www.geeksforgeeks.org/function-pointer-in-c/
 
-To declare a pointer to a function you need to use `()` to force the application of the `*` operator to the name of the function: 
-```c 
+To declare a pointer to a function you need to use `()` to force the application of the `*` operator to the name of the function:
+```c
 int (*foo)(int) = &main;
 ```
 
 Also note that, unlike normal pointers:
 - a function pointer points to code, not data. Typically a function pointer stores the start of executable code.
 - using function pointers does not allocate de-allocate memory
- 
+
 A function's name can also be used to get functions' address. For example, the two programs below are equivalent:
 ```c
-#include <stdio.h> 
-void fun(int a) { 
-    printf("Value of a is %d\n", a); 
-} 
-  
-int main() { 
-    void (*fun_ptr)(int) = &fun; 
-    /* The above line is equivalent of following two 
-       void (*fun_ptr)(int); 
-       fun_ptr = &fun;  
+##include <stdio.h>
+void fun(int a) {
+    printf("Value of a is %d\n", a);
+}
+
+int main() {
+    void (*fun_ptr)(int) = &fun;
+    /* The above line is equivalent to the following two
+       void (*fun_ptr)(int);
+       fun_ptr = &fun;
     */
-    (*fun_ptr)(10); 
-    return 0; 
-} 
+    (*fun_ptr)(10);
+    return 0;
+}
 ```
 vs
 ```c
-#include <stdio.h> 
-void fun(int a) { 
-    printf("Value of a is %d\n", a); 
-} 
-  
-int main() {  
-    void (*fun_ptr)(int) = fun;  // & removed 
-    fun_ptr(10);  // * removed 
-    return 0; 
+#include <stdio.h>
+void fun(int a) {
+    printf("Value of a is %d\n", a);
+}
+
+int main() {
+    void (*fun_ptr)(int) = fun;  // & removed
+    fun_ptr(10);  // * removed
+    return 0;
 }
 ```
 Also:
@@ -52,7 +54,7 @@ int main() {
 }
 ```
 
-# nm and readelf
+## nm and readelf
 
 - `nm` reads the `.symtab` section of an ELF file, while `readelf -s` reads both the `.symtab` and the `.dynsym` section.
 
@@ -137,9 +139,28 @@ Symbol table '.dynsym' contains 12 entries:
 
 - All the undefined symbols point to symbols to a particular library
 
-# Vec and iterators in Rust
+## readelf memo
 
-- Rust automatically adds the `.into_iter()` function implicitly when using a `for` loop over a vector. 
+```sh
+# show segements (the loader's view)
+readelf -Wl /bin/ls
+
+# show sections (the linker's view)
+readelf -WS /bin/ls
+
+# show symbols
+readelf -Ws /bin/ls
+
+# show relocations
+readelf -Wr /bin/ls
+
+# show dynamic section
+readelf -Wd /bin/ls
+```
+
+## Vec and iterators in Rust
+
+- Rust automatically adds the `.into_iter()` function implicitly when using a `for` loop over a vector.
 
 - `fn into_iter(self)` comes from the implementation of
 ```rust
@@ -160,7 +181,7 @@ impl<T, A: Allocator> IntoIterator for Vec<T, A> {
   }
   ```
 
-# Closures in Rust
+## Closures in Rust
 
 - Closures get implemented through a struct and an implementation of the `FnOnce`, `FnMut` or `Fn` trait. From [Rust reference](https://doc.rust-lang.org/reference/types/closure.html):
 ```rust
@@ -200,15 +221,15 @@ so that the call to f works as if it were:
 f(Closure{s: s, t: &t});
 ```
 
-- By default a closure borrows variable immutably. If you want a closure to make use of the `Clone` capability of a variable in the environment it tries to capture, you still need to add the `move` keyword (just like regular functions take ownership or copy a variable when the "plain" variable (not a reference is passed in the arguments).
+- By default a closure borrows variable immutably. If you want a closure to make use of the `Clone` capability of a variable in the environment it tries to capture, you still need to add the `move` keyword (just like regular functions take ownership or copy a variable when the "plain" variable - not a reference - is passed in the arguments).
 
 - The compiler prefers to capture a closed-over variable by immutable borrow, followed by unique immutable borrow (see below), by mutable borrow, and finally by move. It will pick the first choice of these that is compatible with how the captured variable is used inside the closure body.
 
-# .iter on a Vec
+## .iter on a Vec
 
 To check, `.iter()` is not defined on `Vec<T>` but on `[T]`. Yet you can use it on a vec... How does the conversion from `Vec<T>` to `[T]` is done?
 
-# Inlining Assembly in C
+## Inlining Assembly in C
 
 - `gcc` understands assembly which can be inlined inside a C program following a particular syntax that looks like:
 ```c
@@ -236,7 +257,7 @@ void ftl_print(char *msg) {
 
 - The complete documentation is [here](https://gcc.gnu.org/onlinedocs/gcc/Extended-Asm.html)
 
-# Note on the "extern" keyword
+## Note on the "extern" keyword in Rust
 
 - Source: https://www.reddit.com/r/rust/comments/17f78mb/what_is_extern_system/
 
@@ -244,7 +265,7 @@ void ftl_print(char *msg) {
 
 - So actually `extern` is a linkage modifier that tells the compiler to link to a non-Rust function and generate code for calls using the calling convention appropriate for the ABIs of the operating system. For example `extern "C"` tells Rust to use the calling convention commonly used by C compilers for normal libraries. `extern "system"` picks the convention used by system libraries. On Unix, this is equivalent to `extern "C"`, but on Windows, the calling convention used by system libraries is different from the one used by common C libraries. (The reason for this is that these system libraries tried to maintain compatibility with pre-C code, but their ABI couldn't handle important C features like variadic functions.)
 
-# Functions that never returns
+## Functions that never returns in Rust
 
 - A function that "returns" translates actually to machine code that will store the return address (the next location of the PC) inside a register prior to updating the PC. From your notes on Computer Architecture, this translates to the `jalr` instructions from the RISC-V ABI, which we can pseudo-implement in hardware wiring (bluespec) as:
   ```
@@ -275,7 +296,7 @@ fn main() -> Result<(), AnyError> {
 }
 ```
 
-# Move values
+## Move values in Rust
 
 - When returning a value from inside a function, think that you are actually "moving" the value. You can think that the bytes pointed to by their address in memory (some address inside the callee's stack frame) are now referred to by an address in the caller's stack frame AND are copied to some other location on the heap!
 
@@ -288,7 +309,7 @@ struct Container<'a> {
     slice_of_vec: Option<&'a [u8]>,
 }
 
-fn test() 
+fn test()
     let make_container = || {
         let vec = vec![1, 2, 3, 4, 5];
         let mut res = Container { // <- here res's address is on the stack frame of the make_container closure
@@ -302,14 +323,14 @@ fn test()
     let a = make_container(); // res bytes are now pointed to by another address, the address of a (which owns them). Also at this point a.slice_of_vec (which is worth 0xabc) is equal to an address that is no longer considered valid, even though it is still pointing to the same bytes as before (the compiler does not see that, it just sees that the reference points to data that was moved and hence could have been copied elsewhere on the heap).
 ```
 
-# Panic handler and execption handler personality
+## Panic handler and exception handler personality
 
 - Sources:
   - the Rust book: https://doc.rust-lang.org/book/ch09-01-unrecoverable-errors-with-panic.html
   - https://rustc-dev-guide.rust-lang.org/panic-implementation.html
   - LLVM documentation on exception handling: https://llvm.org/docs/ExceptionHandling.html
   - https://nrc.github.io/error-docs/intro.html
-  - source code of rustc: 
+  - source code of rustc:
     - https://github.com/rust-lang/rust/tree/master/library/panic_abort
     - https://github.com/rust-lang/rust/tree/master/library/panic_unwind
 
@@ -373,7 +394,7 @@ The debugger can then easily fetch the old stack pointer and keep unwinding. Thi
 
 - You can customize the panicking behaviour with the `#[panic_handler]` annotation on a function of type `fn(&PanicInfo) -> !`. This is necessary for applications that don't include `libstd` (`#![no_std]` applications) because `libstd` depends on the `panic_abort` and the `panic_unwind` crate, but `libcore` does not. (`#![no_std]` applications don't even have a standard output defined)
 
-- `eh_personality` is a function that can then be linked into the `.eh_frame` which handles exceptions thrown in that binary object (dynamically linked library typically have their own `.eh_frame` section). A default implementation for `eh_personality` is defined in the rust `libstd`. However it is not in `libcore`, so for `no_std` rust apps (which rely only on `libcore`) you need to define one. [libcore doc](https://doc.rust-lang.org/core/)) details that `libcore` expects to find the following symbols: 
+- `eh_personality` is a function that can then be linked into the `.eh_frame` which handles exceptions thrown in that binary object (dynamically linked library typically have their own `.eh_frame` section). A default implementation for `eh_personality` is defined in the rust `libstd`. However it is not in `libcore`, so for `no_std` rust apps (which rely only on `libcore`) you need to define one. [libcore doc](https://doc.rust-lang.org/core/)) details that `libcore` expects to find the following symbols:
   - `memcpy`, `memmove`, `memset`, `memcmp`, `bcmp`, `strlen`: you need to provide your own implementation for those or you can use the [compiler-builtin crates](https://crates.io/crates/compiler_builtins) which enables the rust compiler to generate those functions for you. In the general case, applications depend on `libstd` which depends on `libc` which provides implementation for all these symbols (so they can be resolved)
   - `rust_begin_panic`: this function allows to pass the panic message parameter, it requires the client code to define their own `panic_impl` function. The client code does so by using the `panic_handler` annotation on a function which follows the expected signature. Check the source code in `library/core/src/panicking.rs`:
   ```rust
@@ -382,7 +403,7 @@ The debugger can then easily fetch the old stack pointer and keep unwinding. Thi
 
     pub const fn panic_fmt(fmt: fmt::Arguments<'_>) -> ! {
     // ...
-        // Note from you: 
+        // Note from you:
         // if we decide to abort on panic this is the code that gets run but
         // you still need to provide a panic_handler for this function to compile
         // though (even though it will never get called)
@@ -426,7 +447,7 @@ The debugger can then easily fetch the old stack pointer and keep unwinding. Thi
   ```
   which is defined in `libgcc` which `gcc` always relies on (and `gcc` is used when compiling Rust `libstd`)
 
-# no_mangle annotation
+## no_mangle annotation
 
 - Mangling is when a compiler changes the name we’ve given a function to a different name that contains more information for other parts of the compilation process to consume but is less human readable. Every programming language compiler mangles names slightly differently, so for a Rust function to be callable by other languages, we must disable the Rust compiler's name mangling.
 
@@ -435,7 +456,7 @@ The debugger can then easily fetch the old stack pointer and keep unwinding. Thi
 Since C++ has overloading of function names and C does not, the C++ compiler cannot just use the function name as a unique id to link to, so it mangles the name by adding information about the arguments. A C compiler does not need to mangle the name since you cannot overload function names in C. When you state that a function has extern "C" linkage in C++, the C++ compiler does not add argument/parameter type information to the name used for linkage.
 ```
 
-# Const generics
+## Const generics
 
 - You can parametrize a type by a reified value of another type (integer, bool or character). For example `[A; 3]` represents fixed size array of length 3 holding values of type `A`. If you want to write some code which applies to all fixed size arrays you would write:
 ```rust
@@ -446,8 +467,8 @@ fn function<A, const N: usize>(array: [A; N]) {
 
 - When defining generic behaviour over types that require evaluation at build time you can use the `const` keyword in your type parameter. Here is another more involved example from https://practice.course.rs/generics-traits/const-generics.html:
 ```rust
-#![allow(incomplete_features)]
-#![feature(generic_const_exprs)]
+##![allow(incomplete_features)]
+##![feature(generic_const_exprs)]
 
 fn check_size<T>(val: T)
 where
@@ -455,7 +476,7 @@ where
 {}
 
 fn main() {
-    check_size([0u8; 767]); 
+    check_size([0u8; 767]);
     check_size([0i32; 191]);
     check_size(["hello你好"; 47]); // &str is a string reference, containing a pointer and string length in it, so it takes two word long, in x86-64, 1 word = 8 bytes
     check_size([(); 31].map(|_| "hello你好".to_string()));  // String is a smart pointer struct, it has three fields: pointer, length and capacity, each takes 8 bytes
@@ -471,7 +492,15 @@ impl IsTrue for Assert<true> {}
 
 - What can go behind a `const T: ???` can be either a literal (an integer, bool or char), or an expression which evaluates to such literal. I believe this expression will be evaluated at runtime.
 
-# Pretty printing in GDB
+## GDB cheatsheet
+
+- While running a `gdb` session you can run:
+  - `starti` to start the executable and stop at the entrypoint
+  - `info proc mappings` to show the layout of the executable memory
+  - `watch *(0x0123)` to stop as soon as the content at address `0x0123` is changed
+  - `catch syscall <name-of-syscall>` to stop each time a syscall is made
+
+## Pretty printing in GDB
 
 - In `gdb` you can call a function that is defined in the inferior (the executable you are currently debugging) or in a shared library that the inferior links to.
 
@@ -522,7 +551,7 @@ type so in this case it will print like if you had use `x/gx`).
   (gdb) print *(super_complex_struct *) $rax
   ```
 
-# Threading in Linux
+## Threading in Linux
 
 - Sources:
   - http://stffrdhrn.github.io/hardware/embedded/openrisc/2020/01/19/tls.html
@@ -595,3 +624,103 @@ type so in this case it will print like if you had use `x/gx`).
 - Note that there are several memory layouts possible for the TLS, but usually the static local data is allocated just above the address `A` stored in `fs` and so is the stack (which grows towards higher addresses), while the `pthread` struct goes from the address stored in `fs` downwards. You can check details in this [output](../playground/part-13/stack-layout-gdb.txt)
 
 - Finally, here we talked mostly about user threads that are created through `pthread_create`, but even when the binary does not spawn threads through `libpthread.so`, `ld.so` (which is part of `libc`) will create one `pthread` struct and put its address into the `fs` register. It does not do so with the `clone` syscall (because the process is already created prior to running `exec` - creating the memory space and jumping to the dynamic loader - hence there is nothing to `clone`), but through the `arch_prctl` syscall. The `arch_prctl` is a simple syscall which allows to read and write to the segment registers, such as `fs`. For this main thread, the stack also lives much further away from the address of the `pthread` struct compared to the threads spawned by the user through `libpthread` for which their local stack is pretty close to the `pthread` struct.
+
+## Why do we need a heap?
+
+- Data that is stored on the stack is always referenced with respect to the value of the stack pointer `rsp`. Once you call another function, a new stack frame is created, ie. the stack pointer is updated to point beyond all the memory used in the current function, the function arguments, return address are placed on the stack (with respect to this newly updated stack point - `rsp`) and we jump.
+
+- Hence we can only refer to data that was passed in the arguments. More importantly data created in one callee function is lost once that callee function returns, because the `rsp` is brought back up (the stack grows down) leaving the memory under it unreferenced. That data used on the stack by this callee function will get overwritten anytime another function is called.
+
+- Finally it is impossible to have data of arbitrary size (ie. which will grow dynsy) mingled in the middle of the stack, because the structure of the stack is fixed at compile time (this is how values on the stack can be referenced respectively to `rsp`).
+
+## `brk` vs `mmap` syscalls
+
+- Sources:
+  - https://stackoverflow.com/questions/6988487/what-does-the-brk-system-call-do
+  - https://stackoverflow.com/questions/55768549/in-malloc-why-use-brk-at-all-why-not-just-use-mmap
+
+- `brk` is a system call which updates the `program break` address, from the `man` page:
+    ```
+    brk() and sbrk() change the location of the program break, which defines the end of the process's data segment (i.e., the program break is the first location  after  the  end of the uninitialized data segment). Increasing the program break has the effect of allocating memory to the process; decreasing the break deallocates memory
+    ```
+
+- Trick `sbrk(0)` can be used to return the current value (address) of the program break.
+
+- `brk` is therefore used to allocate more memory to a program. If the address passed to `brk` (or the amount of requested memory passed to `sbrk`) goes beyond the current page, new pages are allocated and mapped contiguously.
+
+- You can pass a positive or negative value to `sbrk`, negative will release some memory.
+
+- In `xv6` `sys_brk` also just updates the current process struct `sz` attribute and if need be allocates a new page and maps it contiguously to the current page where the `program break` is pointing to:
+```c
+uint64 sys_sbrk(void) {
+  int addr, n;
+
+  if(argint(0, &n) < 0)
+    return -1;
+  addr = myproc()->sz;
+  if(growproc(n) < 0)
+    return -1;
+  return addr;
+}
+
+int growproc(int n) {
+  uint sz;
+  struct proc *p = myproc();
+
+  sz = p->sz;
+  if(n > 0){
+    if((sz = uvmalloc(p->pagetable, sz, sz + n)) == 0) {
+      return -1;
+    }
+  } else if(n < 0) {
+    sz = uvmdealloc(p->pagetable, sz, sz + n);
+  }
+  p->sz = sz;
+  return 0;
+}
+```
+
+- Note that the "heap" is just another area in virtual memory. It is initialized by `malloc` (for libc application) for the program to make use of this memory such that data written there persists beyond function calls. The Kernel is not aware of any heap, this a userland concept. In particular if you start an application which does not link to `libc` in `gdb`, you will see that there is no `heap` mapping after `info proc mapping`.
+
+- Typically `brk` is only used by `malloc` or some memory allocator which handles whether the `program break` needs to be pushed up or if there is some space left from deallocated objects it can reuse instead. This is how the "heap" gets grown and shrunk.
+
+- Another way to get more memory is also to use `mmap` which "maps" some pages inside the process virtual address space. `mmap` can map already populated pages (by content of a file, or existing memory of another process for example) but you can also use anonymous mappings to just map some new uninitialized pages in the process virtual memory. `malloc` uses `brk` falls back on `mmap` when a new large amount of memory is needed.
+
+- `mmap` is more modern than `brk`, because it was introduced with virtual memory techniques and larger memory space. The reason why `malloc` still uses `brk`/`sbrk` is mainly for historical reasons (`mmap` is not supported on all platforms). `sbrk` could be more lightweight to use even though there are no clear confirmation of that. [This stackoveflow thread](https://stackoverflow.com/questions/34248854/about-sbrk-and-malloc) seems to say that `malloc` implementations mostly relies on `mmap` now. Also `go`'s memory allocator is fully `mmap` based.
+
+## malloc
+
+- Sources:
+  - https://stackoverflow.com/questions/2241006/what-are-alternatives-to-malloc-in-c
+  - https://stackoverflow.com/questions/10706466/how-does-malloc-work-in-a-multithreaded-environment
+  - https://stackoverflow.com/questions/2863519/arena-in-malloc-function
+  - [Original Paper by Doug Lea - writer of the first malloc](https://gee.cs.oswego.edu/dl/html/malloc.html)
+
+- `malloc` is the default memory allocator on Unix system (implemented in libc on Linux). All it does is managing a large chunk of memory efficiently, by dividing it in regions and tracking where allocated chunks of memory live so that the callees does not end up overwriting live data.
+
+- On Unix, `malloc` relies on `brk` and `mmap` to allocate pages to "fill up" the memory.
+
+- To keep a pointer on its internal heap data strcture, `malloc` most likely uses a global variable to store the address of the heap's head.
+
+- Global variables of an ELF executable or shared library (in this case libc) end up in the `.data` or `.rodata` sections of the ELF file, which are part of segments which get mapped in memory with their own pages with `RW` or `R` permissions. If such an ELF file is static (it does not include a dynamic section, nor an interpreter) then the compiler will hardcode the address of the global variables in the code because the ELF files prescribes where in virtual memory each section will be mapped. If the ELF file is dynamic, the Kernel has mapped load segments in memory and jumped to the interpreter starting point for the the interpreter (`ld.so`) to apply relocations.
+
+- You could technically have multiple memory allocators in one running program. There would be several "heaps" ie. areas of memory managed independently (even though you would need to make sure those areas of memory never overlap, so you would need to initialize those memory allocator with a range of usable addresses). The start of all those heaps could be stored in global variables, if the allocators are not aware of one another, or inside other heaps. You can get creative on how you want to manage your process's memory!
+
+- Understand that a memory allocator is just a function handling an area of free
+  addresses.
+
+- Remark: if your program does not link into `libc`, no page with the description `heap` will be allocated (you can check this in `gdb`), the OS is completely unaware of the heap, it is a user level concept.
+
+### Multi-threaded environments
+
+- `malloc` uses a data structure which allows to allocate memory independently for many threads.
+
+- From https://stackoverflow.com/questions/10706466/how-does-malloc-work-in-a-multithreaded-environment:
+  ```
+  glibc 2.15 operates multiple allocation arenas. Each arena has its own lock. When a thread needs to allocate memory, malloc() picks an arena, locks it, and allocates memory from it.
+  ```
+
+- https://stackoverflow.com/questions/2863519/arena-in-malloc-function details how `malloc` manages to allocate memory without locking (by trying successively each arena until it finds one that is not locked):
+  ```
+  In malloc(), a test is made to see if the mutex for current target arena for the current thread is free (trylock). If so then the arena is now locked and the allocation proceeds. If the mutex is busy then each remaining arena is tried in turn and used if the mutex is not busy. In the event that no arena can be locked without blocking, a fresh new arena is created. This arena by definition is not already locked, so the allocation can now proceed without blocking. Lastly, the ID of the arena last used by a thread is retained in thread local storage, and subsequently used as the first arena to try when malloc() is next called by that thread. Therefore all calls to malloc() will proceed without blocking.
+  ```
