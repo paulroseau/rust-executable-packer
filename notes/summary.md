@@ -1653,3 +1653,217 @@ fs_base        0x7ffff7ddc740      140737351894848
   NB: honestly this part is a bit hard to follow since I didn't edit `elk` along the way and the writing from the author is pretty confusing
 
 - There is a little detour about how to use different type for each state of the process, when you do Process::new you get a `Process<Initialized>`, then on `Process<Initialized>` you define other read only method and a method that takes you to the next state etc.
+
+# Part 14: In the bowels of glibc
+
+https://stackoverflow.com/questions/6988487/what-does-the-brk-system-call-do
+https://sourceware.org/glibc/wiki/MallocInternals
+
+From xv6 brk = basically grows the process memory, meaning it updates the
+process data structure size attribute to some new number and if need be
+allocates a new page and maps it contiguously to the existing heap.
+
+you can use `info proc mappings` in gdb instead of `cat /proc/<pid>/maps`
+
+sounds like `brk` can take a positive or negative argument (can shrink the memory), cf. man page:
+```
+Increasing the program break has the effect of allocating memory to the process; decreasing the break deallocates memory.
+```
+
+https://stackoverflow.com/questions/55768549/in-malloc-why-use-brk-at-all-why-not-just-use-mmap
+
+the program break is some attribute to the process that allows to
+increase/shrink its memory efficiently (in practice new pages get mapped
+contiguously to the heap). But you can always use `mmap` to achieve the same
+purpose. This is what the `libc` does through `malloc` if it detects that `brk` fails. (Initialization for `ptmalloc` checks if `libc` was directly referenced by the running program, if so the writer of the program is aware that `malloc` is around its executable, and we assume that `malloc` is the only thing controlling the `brk`). If not (if `libc` is dynamically loaded, then ptmalloc is disabled by setting the `__morecore` function to `__failing__morecore` which returns `0` instead of the address of the allocated space:
+```c
+/* Allocate INCREMENT more bytes of data space,
+   and return the start of data space, or NULL on errors.
+   If INCREMENT is negative, shrink data space.  */
+void *
+__default_morecore (ptrdiff_t increment)
+{
+  void *result = (void *) __sbrk (increment);
+  if (result == (void *) -1)
+    return NULL;
+
+  return result;
+}
+libc_hidden_def (__default_morecore)
+```
+vs
+```c
+#define MORECORE_FAILURE 0
+
+static void *
+__failing_morecore (ptrdiff_t d)
+{
+  return (void *) MORECORE_FAILURE;
+}
+```
+
+We don't have the debug symbols for:
+```
+❯ readelf -Ws /lib/x86_64-linux-gnu/libc.so.6 | grep "_dl_addr"
+```
+but we have them for the libc from nix:
+```
+❯ readelf -Ws /nix/store/8mc30d49ghc8m5z96yz39srlhg5s9sjj-glibc-2.38-44/lib/libc.so.6 | grep "_dl_ad"
+  3206: 0000000000155e10   131 FUNC    LOCAL  DEFAULT   17 _dl_addr_inside_object
+  4408: 0000000000155a80   902 FUNC    LOCAL  DEFAULT   17 _dl_addr
+
+❯ cp /nix/store/8mc30d49ghc8m5z96yz39srlhg5s9sjj-glibc-2.38-44/lib/libc.so.6 /tmp/libc-stripped ; strip /tmp/libc-stripped ; readelf -Ws /tmp/libc.so.6 | grep "_dl_ad"
+(nothing)
+```
+
+When initializing `ptmalloc`, `libc` features `_dl_addr` and `_dl_find_dso_for_object` both of which are actually provided by `ld-linux-x86-64.so`.
+
+TODO understand why `_dl_find_dso_for_object` is marked as `UND` in `libc` (expected since it should be resolved in `ld-linux-x86-64`) but `_dl_addr` is not...
+```
+❯ readelf -Ws libc.so.6 | head -n 3 ; readelf -Ws libc.so.6 | grep "_dl" | grep "addr|find_dso"
+
+Symbol table '.dynsym' contains 3080 entries:
+   Num:    Value          Size Type    Bind   Vis      Ndx Name
+     2: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND _dl_find_dso_for_object@GLIBC_PRIVATE (41)
+  1952: 0000000000086ba0    71 FUNC    LOCAL  DEFAULT   17 __dladdr1
+  2380: 0000000000086b70    41 FUNC    LOCAL  DEFAULT   17 __dladdr
+  3206: 0000000000155e10   131 FUNC    LOCAL  DEFAULT   17 _dl_addr_inside_object
+  4408: 0000000000155a80   902 FUNC    LOCAL  DEFAULT   17 _dl_addr
+  6062: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND _dl_find_dso_for_object@GLIBC_PRIVATE
+```
+vs
+```
+❯ readelf -Ws ld-linux-x86-64.so.2 | head -n 3 ; readelf -Ws ld-linux-x86-64.so.2 | grep "_dl" | grep "addr|find_dso"
+
+Symbol table '.dynsym' contains 39 entries:
+   Num:    Value          Size Type    Bind   Vis      Ndx Name
+    22: 000000000000bac0   195 FUNC    GLOBAL DEFAULT   11 _dl_find_dso_for_object@@GLIBC_PRIVATE
+   207: 000000000000bac0   195 FUNC    LOCAL  DEFAULT   11 __GI__dl_find_dso_for_object
+   260: 0000000000020c80   131 FUNC    LOCAL  DEFAULT   11 _dl_addr_inside_object
+   455: 0000000000012260   125 FUNC    LOCAL  DEFAULT   11 _dl_tls_get_addr_soft
+   538: 000000000000bac0   195 FUNC    GLOBAL DEFAULT   11 _dl_find_dso_for_object
+```
+When using the `dig` utility which prints the details about an address when running with `gdb` (something we implemented in Part 9) we see that calling `_dl_find_dso_for_object` for the first time actually goes to `.plt.sec` a secondary PLT. So far we only have seen a single PLT in running ELF files, it seems this secondary PLT is a special trick specific to `ld-linux.so`. There is no more explanation on why this is needed besides the fact that `ld-linux.so` is a special beast: it is an ELF file which is both an interpreter/executable and a library which is in charge of relocating stuff.
+
+Then we see that statically linked executables actually do have relocations as well. We compare for a dynamically linked executable, statically linked executable, and statically position-independent executable:
+```
+❯ readelf -Wr static-pie-what | grep "R_X86" | cut -d " " -f 4 | uniq -c
+   1106 R_X86_64_RELATIVE
+     22 R_X86_64_IRELATIVE
+
+rust-executable-packer/playground/part-14 on  main [!?] via C v16.0.6-clang on ☁️  proseau@google.com 
+❯ readelf -Wr static-what | grep "R_X86" | cut -d " " -f 4 | uniq -c
+     22 R_X86_64_IRELATIVE
+
+rust-executable-packer/playground/part-14 on  main [!?] via C v16.0.6-clang on ☁️  proseau@google.com 
+❯ readelf -Wr regular-what | grep "R_X86" | cut -d " " -f 4 | uniq -c 
+      3 R_X86_64_RELATIVE
+      5 R_X86_64_GLOB_DAT
+      1 R_X86_64_JUMP_SLOT
+```
+
+It seems that even `ld-linux.so` has some relocations (on my machine it's only a 3, but from the article the author seems to have more). It turns out that `ld-linux.so` 
+
+
+We try on statically linked `what` and we see that some memory gets updated at the
+begining (resolving some ifunc). It probably pulls a bit of the `ld` code that
+`libc` depends on into it to do that (just the functions to relocate the `ifunc` functions).
+`gdb` does not allow us to actually check the code that performs that, but there
+is code updating the plt. 
+Also trying to launch `ld-linux.so` with `gdb` we see that `ld-linux.so` relocates itself.
+However it sounds like this is code inside glibc? Is it actually in `ld` which
+libc links against ?? Difference between `glibc` and `libc`? this is a bit confusing. Anyway code in `glibc` needs to be careful because at one point the whole executable moves itself so address references etc. can be all wrong.
+The code of `ld.so` lives inside `glibc` inside the `./elf` directory
+
+There are no statically VS dynamically linked executables, you can have a
+combination of:
+- having an interpreter set or not
+- a dynamic section with needed libraries
+- relocations
+- does it map memory to 0x000
+
+Shared libraries also have entry points: they have an array of initializers and finalizers. initializers are pointed to by the `.init`, `.init_array` sections and the finalizers by the `.fini` and `.fini_array` sections.
+`glibc` calls those with `argc`, `argv`, and `envp` in arguments (cf. `__libc_csu_init` function in `glibc/csu/elf-init.c`. They are
+called in the reverse order in which the objects have been loaded.
+
+There are 2 types of relocations, the direct ones and the indirect ones - which require to run a function to find the address to be relocated to. These functions run to find the address can call other functions, hence when relocating code, the direct relocations are applied first and then the indirect ones are.
+
+restart from "one last thing" what is this 0 relocation for?
+
+Then understand why altering the fs register fucks up malloc
+understand the what now, why would we need to patch all of those `dl_` method
+
+
+Big questions:
+
+- maybe watch: https://www.youtube.com/watch?v=Ss2e6JauS0Y
+
+- when symbols are not showing in a C library, can we link against those? or are they used only internally (like private functions/variables)? is that difference between dynamic symbols and the ones only in symtab? Does this change when you have the debug symbols in your lib elf file?
+
+  - there is a difference between symbols' Bind and Visibility
+  - check out the difference of symbols in static library vs dynamic libraries
+
+    - gcc -print-file-name=<lib>   Display the full path to library <lib>.
+    - be careful with `ldd` it checks the runpath but for the interpreter which is hardcoded to some /nix/store/.../ it resolves it to the /lib64/ld-linux-x86-64.so.2 because it is not nix's `ldd` and uses some other search path I guess. nix's `ldd` uses the right interpreter
+    - basically yes to all your questions, there are local symbols in the symtab which can be used only inside the lib
+    - weak symbols are placeholders that can be filled by global symbols from other objects cf. https://downloads.ti.com/docs/esd/SPNU118/symbols-stdz069309.html
+    - in C everything top level is global
+    - there are 2 types of considerations to have:
+      - static libraries: here it seems like symbols can only be global anyway
+      - dynamic libraries: here you can say whether the symbol is hidden|protected|etc. to tell the dynamic linker what to do at run time
+
+    - interesting on symbols: https://www.cita.utoronto.ca/~merz/intel_c10b/main_cls/mergedProjects/bldaps_cls/cppug_ccl/
+      - https://www.cita.utoronto.ca/~merz/intel_c10b/main_cls/mergedProjects/bldaps_cls/cppug_ccl/bldaps_global_symbols_cl.htm
+      - https://www.cita.utoronto.ca/~merz/intel_c10b/main_cls/mergedProjects/bldaps_cls/cppug_ccl/bldaps_sym_pre_cl.htm
+      - https://www.cita.utoronto.ca/~merz/intel_c10b/main_cls/mergedProjects/bldaps_cls/cppug_ccl/bldaps_linking_cl.htm
+      - https://www.cita.utoronto.ca/~merz/intel_c10b/main_cls/mergedProjects/bldaps_cls/cppug_ccl/bldaps_create_libs_cl.htm
+      - https://www.cita.utoronto.ca/~merz/intel_c10b/main_cls/mergedProjects/bldaps_cls/cppug_ccl/bldaps_comp_non_shared_cl.htm
+    - also: https://intezer.com/blog/malware-analysis/executable-linkable-format-101-part-2-symbols/#:~:text=Binding%20attributes%20determine%20the%20linkage,visible%20to%20all%20object%20files
+
+- it seems that libc depends on ld-linux, why? The consequence of that is that for static executables, even though they are not loaded by the dynamic loader `ld-linux`, the `ld-linux` code will make its way in the running executable.
+  -> why, amongst other things, we see here that libc needs to identified if it was dynamically loaded or not, and for that relies on dl_addr (and `dl_start` maybe? check) which are part of `ld-linux.so`
+
+- how is malloc initialized? There must be a data structure keeping track of the memory used/freed on the heap, where does it live? It can't be on the stack (cf. https://github.com/lattera/glibc/blob/master/malloc/malloc.c)
+  - when running an executable that does not depend on libc (cf. chimera) there is no `heap` page. Hence `libc` initialized the heap (creating the page). The only question is where the address of the heap is stored such that malloc can access it across several calls? when the heap is created, we only have the stack... probably in some global variable
+
+- does the exec syscall set up the initial stack (ie. the kernel) in memory? or is it done in the `_start` function (ie. after the kernel jumped to the entrypoint)? -> probably the kernel, this is how it is done in xv6. Yes that is the case.
+
+- who runs the init array of the executable? (such as in Rust to store the argc, argv etc.) it is ld-linux when loading the .so, .so's entrypoint are the .init and .init_array functions which are run by passing the argc, argv and envp arguments
+
+- who relocates the ifunc? It seems that libc has ifunc implementations which basically update the current running process (the PLT)
+
+- how do you do if some part of your objects loading in your exectuable don't use malloc (and end up using brk), ie. can several object using different allocator coexist?
+  -> understand what malloc actually is: https://stackoverflow.com/questions/2241006/what-are-alternatives-to-malloc-in-c , since you are using an OS, it is just a way to get more memory for your program in a region called the heap. You could totally ask for more memory and map it somewhere else (I think `brk` moves a mark and if need be gets more memory (ie. grab a new page) and maps it contiguously to where the heap already was, but you could `mmap` some new pages far away in memory and hence have 2 heaps)
+  -> https://www.reddit.com/r/rust/comments/15dsswd/alloc_vs_corealloc/
+  -> https://www.uninformativ.de/blog/postings/2015-10-25/0/POSTING-en.html
+
+- Walkthrough of the exec syscall in XV6
+  - exec syscall is called 
+  - triggers an interrupt, we jump to kernel mode in the trampoline code (we still are using the user page table)
+  - we save all the registers of the current process (we will override those later but that's what we do generically for all syscalls) in the trapframe which lies in a dedicated page mapped somewhere in the current process memory when the process was initally created
+  - we also save the old pc in the trapframe (in xv6 we need to use r_sepc() instruction for that so that is done in the trap code) this will also be update later
+  - the kernel sees the exec call and the arguments placed in the registers
+  - it finds the executable file, parses it
+  - if removes the current process mappings (if called from a shell, there probably was a cloned made before the exec)
+  - it allocates some pages and puts the executable code in there, creates the stack by putting the argv in there, update the process's page table root (we are still in the kernel)
+  - prepare the pc to return to either the _start method of the static executable or the _start of the interpreter (ld-linux) by updating its value in the trapframe
+  - once we return from the syscall we go to usertrapret, we prepare the trapframe with the kernel pagetable, the usertrap function address, and some info necessary for the next time we jump from usercode in the kernel, we update the previous pc special register
+  - jump into userret code where we load register values saved in the trapframe, write the trapframe address in the scratch register for next time (note the hack is that this page is mapped always to the same virtual address for all processes)
+  - we use sret which will lower the privilege and jump to where the old pc points to
+
+
+  - if there is an interpreter, maps this one in memory (with the executable to load as argument? or is the executable mapped as well?)
+  - if static exec, maps the segments of the executable in this process address table (we are still in Kernel mode, we are updating the page table)
+
+
+- for dynamic library, you don't know where you will be mapped in memory, so the code needs to be position independant, hence it uses relative addressing (relative to the PC)
+
+- the dynamic loader:
+  - finds the symbols that are needed
+  - maps the .text / .data components in memory
+  - apply relocations to reference the symbols
+
+- All we need at link time is the symbol table and relocatoins (the dynamic part, the symbols missing, and how to include the symbols exported). That results in the final symbol table of what you are compiling
+- GOT is a level of indirection ("Any problem in CS can be solved by adding a level of indirection"). You reference an area in the GOT which is RW, the GOT is populated by the address of the symbol living in another component. In the GOT there is an entry for all global variables
+- the `.got.plt` is just a subset of the `.got` which is relevant for the `PLT`.
+- the `plt` is a read only piece of memory with 3 assembly instructions (you detailed that above or in misc). It's a clever trick because it seems that with the first jump which says "jump to the address pointed to by the value stored in that address" (check that it is indeed one jump and not 2), you can directly jump where the function is. The first time the address stored in the `.got.plt` points to the 2nd instruction which then takes you systematically to call the interpreter (the entrypoint of your program)
