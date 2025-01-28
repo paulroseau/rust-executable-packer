@@ -265,7 +265,7 @@ void ftl_print(char *msg) {
 
 - So actually `extern` is a linkage modifier that tells the compiler to link to a non-Rust function and generate code for calls using the calling convention appropriate for the ABIs of the operating system. For example `extern "C"` tells Rust to use the calling convention commonly used by C compilers for normal libraries. `extern "system"` picks the convention used by system libraries. On Unix, this is equivalent to `extern "C"`, but on Windows, the calling convention used by system libraries is different from the one used by common C libraries. (The reason for this is that these system libraries tried to maintain compatibility with pre-C code, but their ABI couldn't handle important C features like variadic functions.)
 
-## Functions that never returns in Rust
+## Functions that never return in Rust
 
 - A function that "returns" translates actually to machine code that will store the return address (the next location of the PC) inside a register prior to updating the PC. From your notes on Computer Architecture, this translates to the `jalr` instructions from the RISC-V ABI, which we can pseudo-implement in hardware wiring (bluespec) as:
   ```
@@ -467,8 +467,8 @@ fn function<A, const N: usize>(array: [A; N]) {
 
 - When defining generic behaviour over types that require evaluation at build time you can use the `const` keyword in your type parameter. Here is another more involved example from https://practice.course.rs/generics-traits/const-generics.html:
 ```rust
-##![allow(incomplete_features)]
-##![feature(generic_const_exprs)]
+#![allow(incomplete_features)]
+#![feature(generic_const_exprs)]
 
 fn check_size<T>(val: T)
 where
@@ -597,7 +597,7 @@ type so in this case it will print like if you had use `x/gx`).
     - its thread ID appointed by the kernel (which is equal to the address where the `pthread` struct starts being written, in other words it holds a reference to itself)
     - the function that the thread is executing (its entrypoint) and its parameters
     - parameters for the scheduler, whether the user provides the thread with its own stack, etc.
-    - calls the `clone` syscall with the right flags and passes the `pthread` struct initiated before as one of the arguments of the `clone` syscall
+  - calls the `clone` syscall with the right flags and passes the `pthread` struct initiated before as one of the arguments of the `clone` syscall
   The result of the call to `clone` with such arguments is that the address `A` (where the `pthread` struct is written) is placed into `fs` and each time the Kernel switches threads that `fs` register will be updated to hold the address `A` of the next thread to run. This allows the `libc` code that deals with threads to refer to variables respectively to the content of `fs` and hence can execute properly for any threads. For instance here is the code to return the ID of any thread (ie. it is always written 16 bytes after the address stored in `fs`):
    ```
    (gdb) disas pthread_self

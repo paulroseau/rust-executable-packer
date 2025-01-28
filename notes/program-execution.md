@@ -2,14 +2,12 @@
 
 ## Intro
 
-- On Linux, executables are written in the ELF binary format. ELF files can be of
-different types, namely they can be:
+- On Linux, executables are written in the ELF binary format. ELF files can be of different types, namely they can be:
     - an executable
     - an object (`.o`) which is a "part" of an executable and which can be bundled with other `.o` to make an executable. This bundling process is called linking
     - a shared object (`.so`) which essentially is a shared library, it is an object which holds some binary code that an executable can link against at run time
 
-- To build such an ELF file you need to write you need to compile code (for `C`
-you would use `gcc`) to get `.o` files and link them with the linker, `ld` to get an executable. 
+- To build such an ELF file you need to write code and compile it (for `C` you would use `gcc`) to get `.o` files and finally link those `.o` files with the linker, `ld`, to get an executable. 
 
 - The resulting executable can be:
   - statically linked: it contains all the binary code necessary to its execution
