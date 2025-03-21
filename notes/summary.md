@@ -1662,6 +1662,6 @@ fs_base        0x7ffff7ddc740      140737351894848
   - why we need a heap
   - how does malloc gets initialized
 
-- Its main point is that static executable and static PIE executable have relocations as well but don't have an interpreter. Those relocations are indirect relocations and are processed by `libc` which actually depends on `ld.so`.
+- Its main point is that static executables and static PIE executables have relocations as well but don't have an interpreter. Those relocations are indirect relocations and are processed by `libc` which actually depends on `ld.so`.
 
 - It was a good occasion to summarize all that you learnt about the dynamic loader, ELF relocations, C symbols in those [consolidated notes](./program-execution.md) on this part.

@@ -447,9 +447,9 @@ The debugger can then easily fetch the old stack pointer and keep unwinding. Thi
   ```
   which is defined in `libgcc` which `gcc` always relies on (and `gcc` is used when compiling Rust `libstd`)
 
-## no_mangle annotation
+## no_mangle annotation in Rust
 
-- Mangling is when a compiler changes the name we’ve given a function to a different name that contains more information for other parts of the compilation process to consume but is less human readable. Every programming language compiler mangles names slightly differently, so for a Rust function to be callable by other languages, we must disable the Rust compiler's name mangling.
+- Mangling is when a compiler changes the name we've given a function to a different name that contains more information for other parts of the compilation process to consume but is less human readable. Every programming language compiler mangles names slightly differently, so for a Rust function to be callable by other languages, we must disable the Rust compiler's name mangling.
 
 - From [this question](https://stackoverflow.com/questions/1041866/what-is-the-effect-of-extern-c-in-c) on StackOverflow (about `extern` in C++, the same reasoning applies for Rust):
 ```
@@ -680,7 +680,7 @@ int growproc(int n) {
 }
 ```
 
-- Note that the "heap" is just another area in virtual memory. It is initialized by `malloc` (for libc application) for the program to make use of this memory such that data written there persists beyond function calls. The Kernel is not aware of any heap, this a userland concept. In particular if you start an application which does not link to `libc` in `gdb`, you will see that there is no `heap` mapping after `info proc mapping`.
+- Note that the "heap" is just another area in virtual memory. It is initialized by `malloc` (for libc application) for the program to make use of this memory such that data written there persists beyond function calls. The Kernel is not aware of any heap, this is a userland concept. In particular if you start an application which does not link to `libc` in `gdb`, you will see that there is no `heap` mapping after `info proc mapping`.
 
 - Typically `brk` is only used by `malloc` or some memory allocator which handles whether the `program break` needs to be pushed up or if there is some space left from deallocated objects it can reuse instead. This is how the "heap" gets grown and shrunk.
 
@@ -691,23 +691,27 @@ int growproc(int n) {
 ## malloc
 
 - Sources:
+  - https://stackoverflow.com/questions/71413587/why-is-malloc-considered-a-library-call-and-not-a-system-call
   - https://stackoverflow.com/questions/2241006/what-are-alternatives-to-malloc-in-c
   - https://stackoverflow.com/questions/10706466/how-does-malloc-work-in-a-multithreaded-environment
   - https://stackoverflow.com/questions/2863519/arena-in-malloc-function
   - [Original Paper by Doug Lea - writer of the first malloc](https://gee.cs.oswego.edu/dl/html/malloc.html)
 
-- `malloc` is the default memory allocator on Unix system (implemented in libc on Linux). All it does is managing a large chunk of memory efficiently, by dividing it in regions and tracking where allocated chunks of memory live so that the callees does not end up overwriting live data.
+```
+An operating system typically allocates some memory space for a given process, but how the memory is used after that is up to the process. Using the standard library for things like memory allocation insulates your code from the details of any given operating system, which makes your code a lot more portable. A given implementation of malloc might ultimately make a system call to obtain memory, but whether it does or doesn't or does some of the time is an implementation detail.
+```
 
-- On Unix, `malloc` relies on `brk` and `mmap` to allocate pages to "fill up" the memory.
+- `malloc` is the default memory allocator on Unix system. It is not a system call and is implemented in C (in the standard libc on Linux). All it does is managing a large chunk of memory efficiently, by dividing it in regions and tracking where allocated chunks of memory live so that the callees does not end up overwriting live data.
 
-- To keep a pointer on its internal heap data strcture, `malloc` most likely uses a global variable to store the address of the heap's head.
+- On Unix, `malloc` relies on the `brk` and `mmap` syscalls to allocate new physical pages to "fill up" the virtual memory.
 
-- Global variables of an ELF executable or shared library (in this case libc) end up in the `.data` or `.rodata` sections of the ELF file, which are part of segments which get mapped in memory with their own pages with `RW` or `R` permissions. If such an ELF file is static (it does not include a dynamic section, nor an interpreter) then the compiler will hardcode the address of the global variables in the code because the ELF files prescribes where in virtual memory each section will be mapped. If the ELF file is dynamic, the Kernel has mapped load segments in memory and jumped to the interpreter starting point for the the interpreter (`ld.so`) to apply relocations.
+- To keep a pointer on its internal heap data structure, `malloc` most likely uses a global variable to store the address of the heap's head.
+
+- Global variables of an ELF executable or shared library (in this case libc) end up in the `.data` or `.rodata` sections of the ELF file, which are part of segments which get mapped in memory with their own pages with `RW` or `R` permissions. If such an ELF file is static (it does not include a dynamic section, nor an interpreter) then the compiler will hardcode the address of the global variables in the code because the ELF file prescribes where in virtual memory each section will be mapped. If the ELF file is dynamic, the Kernel has mapped load segments in memory and jumped to the interpreter starting point for the the interpreter (`ld.so`) to apply relocations.
 
 - You could technically have multiple memory allocators in one running program. There would be several "heaps" ie. areas of memory managed independently (even though you would need to make sure those areas of memory never overlap, so you would need to initialize those memory allocator with a range of usable addresses). The start of all those heaps could be stored in global variables, if the allocators are not aware of one another, or inside other heaps. You can get creative on how you want to manage your process's memory!
 
-- Understand that a memory allocator is just a function handling an area of free
-  addresses.
+- Understand that a memory allocator is just a function handling an area of free addresses.
 
 - Remark: if your program does not link into `libc`, no page with the description `heap` will be allocated (you can check this in `gdb`), the OS is completely unaware of the heap, it is a user level concept.
 
